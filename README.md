@@ -57,4 +57,4 @@ Les résultats sont écrits dans `outputs/site_shift_test-IOP/`.
 
 ## Résultats
 
-À venir.
+À venir. Les résultats préliminaires et les notes de travail sont dans [docs/journal.md](docs/journal.md).

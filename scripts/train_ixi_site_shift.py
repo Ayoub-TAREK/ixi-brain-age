@@ -44,6 +44,23 @@ SITES = ["Guys", "HH", "IOP"]
 IMAGE_TRANSFORMS = []
 
 
+class AgeRegressor(torch.nn.Module):
+    """DenseNet qui prédit un âge normalisé z ; la sortie est remise en années (moyenne + écart-type * z).
+
+    Les labels, la loss et la MAE restent donc en années. La moyenne et l'écart-type sont
+    enregistrés dans le checkpoint (buffers), ce qui permet de recharger le modèle tel quel.
+    """
+
+    def __init__(self, age_mean: float = 0.0, age_std: float = 1.0):
+        super().__init__()
+        self.net = DenseNet121(spatial_dims=3, in_channels=1, out_channels=1)
+        self.register_buffer("age_mean", torch.tensor(float(age_mean)))
+        self.register_buffer("age_std", torch.tensor(float(age_std)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x) * self.age_std + self.age_mean
+
+
 def make_dataset(tsv: Path) -> BidsDataset:
     return BidsDataset(
         bids=BIDS_DIR,
@@ -87,6 +104,7 @@ def main():
     parser.add_argument("--test-site", default="IOP", choices=SITES)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
@@ -120,10 +138,15 @@ def main():
     split.build_val_loader(batch_size=args.batch_size)
 
     # 3. Modèle et entraînement
+    # normalisation de l'âge avec les sujets train + validation uniquement (le test interne est exclu)
+    pool_ids = pd.read_csv(split_dir / "train.tsv", sep="\t")[["participant_id", "session_id"]]
+    train_ages = table.merge(pool_ids, on=["participant_id", "session_id"])["AgeMRI"]
+    print(f"Âge (train + val) : moyenne {train_ages.mean():.1f}, écart-type {train_ages.std():.1f}")
+    print(f"Learning rate : {args.lr}")
     model = SupervisedModel(
-        network=DenseNet121(spatial_dims=3, in_channels=1, out_channels=1),
+        network=AgeRegressor(train_ages.mean(), train_ages.std()),
         loss=torch.nn.MSELoss(),
-        optimizer=AdamConfig(),
+        optimizer=AdamConfig(lr=args.lr),
         label_key="AgeMRI",
     )
     trainer = Trainer(
