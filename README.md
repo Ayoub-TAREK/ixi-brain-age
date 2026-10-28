@@ -67,4 +67,4 @@ Results are written to `outputs/site_shift_test-IOP/`.
 
 ## Results
 
-Coming soon. Preliminary results and working notes are in [docs/journal.md](docs/journal.md) (in French).
+Coming soon. Preliminary results and working notes are in [docs/journal.md](docs/journal.md).
