@@ -145,7 +145,7 @@ def main():
     # 4. Évaluations : même hôpitaux vs hôpital jamais vu
     in_site = dataset.subset(split_dir / "test_baseline.tsv")
     out_of_site = make_dataset(ood_tsv)
-    for name, ds in [("in-site", in_site), ("out-of-site", out_of_site)]:
+    for name, ds in [("insite", in_site), ("outofsite", out_of_site)]:
         print(f"\n=== Test {name} ({len(ds)} images) ===")
         trainer.test(
             model_checkpoint="split-0_best-mae",  # meilleure MAE de validation, pas la dernière epoch
