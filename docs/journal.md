@@ -69,6 +69,30 @@ Signed error (predicted − true age) by age group:
 
 Validation curve: much more stable than v1 (MAE between ~6 and ~22 years), but still noisy from one epoch to the next.
 
+## Run v2-HH (2026-10-28): HH held out
+
+- Same configuration as v2, but train on Guys + IOP (382 subjects, 76 held out as internal test) and test on HH (181 subjects).
+- Stopped at epoch 28. Validation curve noisy (MAE ~7-18 years, one spike at ~30).
+- Drive folder: `outputs/site_shift_test-HH`.
+
+| | MAE | Mean signed error | Pearson r |
+|---|---|---|---|
+| insite (Guys + IOP) | **7.93 years** | −2.43 | 0.78 |
+| outofsite (HH) | **25.22 years** | −25.17 | 0.80 |
+
+Signed error by age group:
+
+| Age | insite: n / MAE / bias | HH: n / MAE / bias |
+|---|---|---|
+| ≤ 35 | 19 / 7.03 / +3.17 | 56 / 14.42 / −14.24 |
+| 35-50 | 17 / 8.92 / −1.26 | 38 / 22.93 / −22.93 |
+| 50-65 | 31 / 7.12 / −4.23 | 57 / 31.82 / −31.82 |
+| 65+ | 9 / 10.74 / −10.23 | 30 / 35.76 / −35.76 |
+
+- **All HH subjects are under-estimated**, increasingly with age. Predictions are compressed and shifted down (roughly predicted ≈ 15 + 0.4 × true age), yet the ranking is preserved (r = 0.80, as high as in-site).
+- Same failure mode as IOP (unseen hospital → brains look "younger"), but much stronger and affecting young subjects too.
+- The plot of this run clipped a few HH predictions below 15 years (fixed since in `predict_ages.py`).
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: MAE ≈ 6 years vs 14 for the naive baseline, well calibrated, with the usual mild regression to the mean (young subjects slightly over-estimated, old ones slightly under-estimated).
@@ -85,6 +109,8 @@ Validation curve: much more stable than v1 (MAE between ~6 and ~22 years), but s
 - **Signed predictions for v1** (notebook cell 7 bis) to check whether v1 shows the same pattern.
 - **Swap roles**: `--test-site Guys` and `--test-site HH`, to see whether the effect is specific to IOP.
 - **Several seeds**: seeds are fixed to 42 (split and training); add a `--seed` option to measure run-to-run variability.
+- **Intensity normalization** (main suspect after the HH run): `ZNormalization` currently uses the whole volume, background and skull included, so differences in field of view, background or contrast between scanners shift the normalized brain intensities. Try foreground-masked z-normalization or histogram standardization, then rerun the IOP and HH tests.
+- **Linear recalibration on the new site**: since the ranking is preserved (r ≈ 0.8), check how much of the error a linear fit on a few labeled subjects of the new hospital removes.
 - **Look at the images**: compare intensity histograms and gray/white matter contrast of older subjects across hospitals, to test the scanner-contrast hypothesis.
 - **Bias correction**, standard in brain age studies (linear regression of the error on true age, fitted on validation).
 - **Robustness to scanners**: intensity / contrast augmentations (in `IMAGE_TRANSFORMS`), site harmonization.

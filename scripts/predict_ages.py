@@ -70,7 +70,8 @@ def plot(df: pd.DataFrame, title: str, path: Path) -> None:
     for group, d in df.groupby("group", sort=False):
         ax1.scatter(d.AgeMRI, d.predicted, s=15, alpha=0.7, label=f"{group} (n={len(d)})")
         ax2.scatter(d.AgeMRI, d.error, s=15, alpha=0.7, label=group)
-    lims = [15, 90]
+    values = df[["AgeMRI", "predicted"]]
+    lims = [min(15, values.min().min() - 2), max(90, values.max().max() + 2)]
     ax1.plot(lims, lims, "k--", lw=1)
     ax1.set(xlabel="Âge réel", ylabel="Âge prédit", xlim=lims, ylim=lims, title="Âge prédit vs réel")
     ax2.axhline(0, color="k", lw=1, ls="--")
