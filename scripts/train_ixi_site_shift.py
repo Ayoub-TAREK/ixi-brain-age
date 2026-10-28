@@ -9,7 +9,7 @@ Expérience :
 Lancer :  python scripts/train_ixi_site_shift.py --test-site IOP
           python scripts/train_ixi_site_shift.py --check   (vérifie le prétraitement sur 1 image)
 
-Nécessite la sortie de scripts/ixi_to_bids.py dans data/IXI/bids.
+Nécessite la sortie de scripts/cache_preprocessed.py dans data/IXI/bids_2mm.
 Les corrections d'API trouvées sur brain_age_test.py sont reprises ici.
 """
 
@@ -34,17 +34,14 @@ from clinicadl.train import ComputationalConfig, Trainer
 from clinicadl.transforms import TransformsHandler
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-BIDS_DIR = BASE_DIR / "data" / "IXI" / "bids"
+BIDS_DIR = BASE_DIR / "data" / "IXI" / "bids_2mm"
 ALL_TSV = BIDS_DIR / "participants_sessions_age.tsv"
 SITES = ["Guys", "HH", "IOP"]
 
-# Prétraitement simple (pas de recalage ni de retrait du crâne : limite à mentionner dans le README)
-IMAGE_TRANSFORMS = [
-    tio.ToCanonical(),
-    tio.Resample(2),                          # 2 mm isotrope
-    tio.ZNormalization(),
-    tio.CropOrPad(target_shape=(112, 128, 112)),  # à vérifier avec --check
-]
+# Le prétraitement (ToCanonical, Resample 2 mm, ZNormalization, CropOrPad 112x128x112) est déjà
+# appliqué une fois pour toutes par scripts/cache_preprocessed.py.
+# C'est ici qu'on ajoutera les futures augmentations de données.
+IMAGE_TRANSFORMS = []
 
 
 def make_dataset(tsv: Path) -> BidsDataset:

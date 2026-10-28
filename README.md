@@ -10,6 +10,8 @@ L'objectif est de mesurer l'effet d'un **changement de domaine entre hôpitaux**
 
 ## Contrôle du prétraitement
 
+Le prétraitement est pré-calculé une seule fois par `scripts/cache_preprocessed.py` (images à 2 mm dans `data/IXI/bids_2mm`), ce qui accélère l'entraînement.
+
 Une image par hôpital après prétraitement (sortie de `--check`) :
 
 | Guys | HH | IOP |
