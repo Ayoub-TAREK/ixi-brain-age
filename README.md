@@ -1,18 +1,18 @@
 # ixi-brain-age
 
-Prédiction de l'âge cérébral à partir d'IRM T1 du jeu de données [IXI](https://brain-development.org/ixi-dataset/), avec [ClinicaDL 2.0](https://clinicadl.readthedocs.io/) et un DenseNet 3D (MONAI).
+Brain age prediction from T1-weighted MRI of the [IXI](https://brain-development.org/ixi-dataset/) dataset, using [ClinicaDL 2.0](https://clinicadl.readthedocs.io/) and a 3D DenseNet (MONAI).
 
-L'objectif est de mesurer l'effet d'un **changement de domaine entre hôpitaux** (site shift) :
+The goal is to measure the effect of a **domain shift between hospitals** (site shift):
 
-- entraînement sur les hôpitaux **Guys** et **HH** (split par patient : train / validation / test interne) ;
-- évaluation sur le test interne (mêmes hôpitaux, sujets jamais vus) ;
-- évaluation sur l'hôpital **IOP**, jamais vu pendant l'entraînement.
+- training on the **Guys** and **HH** hospitals (subject-level split: train / validation / internal test);
+- evaluation on the internal test set (same hospitals, unseen subjects);
+- evaluation on the **IOP** hospital, never seen during training.
 
-## Contrôle du prétraitement
+## Preprocessing check
 
-Le prétraitement est pré-calculé une seule fois par `scripts/cache_preprocessed.py` (images à 2 mm dans `data/IXI/bids_2mm`), ce qui accélère l'entraînement.
+Preprocessing is computed once by `scripts/cache_preprocessed.py` (2 mm images in `data/IXI/bids_2mm`), which speeds up training.
 
-Une image par hôpital après prétraitement (sortie de `--check`) :
+One image per hospital after preprocessing (output of `--check`):
 
 | Guys | HH | IOP |
 |:---:|:---:|:---:|
@@ -21,40 +21,50 @@ Une image par hôpital après prétraitement (sortie de `--check`) :
 ## Structure
 
 ```
-scripts/ixi_to_bids.py                conversion IXI -> BIDS + fichier des âges
-scripts/train_ixi_site_shift.py       entraînement et évaluation in-site / out-of-site
-notebooks/ixi_brain_age_colab.ipynb   exécution sur Google Colab
-docs/                                 images de contrôle
+scripts/ixi_to_bids.py                IXI -> BIDS conversion + age table
+scripts/cache_preprocessed.py         one-off preprocessing (2 mm, normalization, crop)
+scripts/train_ixi_site_shift.py       training and in-site / out-of-site evaluation
+scripts/predict_ages.py               signed predictions (predicted - true age) and plots
+notebooks/ixi_brain_age_colab.ipynb   end-to-end run on Google Colab
+docs/                                 preprocessing check images, experiment journal
 ```
 
-## Reproduire
+## Reproduce
 
-Les données IXI **ne sont pas incluses** dans ce dépôt. Elles sont à télécharger depuis la source officielle : https://brain-development.org/ixi-dataset/ (voir les conditions d'utilisation sur ce site).
+The IXI data is **not included** in this repository. Download it from the official source: https://brain-development.org/ixi-dataset/ (see the terms of use on that site).
 
-1. Installer les dépendances :
+1. Install the dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-2. Télécharger `IXI-T1.tar` et `IXI.xls`, puis les placer ainsi :
+2. Download `IXI-T1.tar` and `IXI.xls`, and place them as follows:
    ```
-   data/IXI/raw/IXI002-Guys-0828-T1.nii.gz ...   (contenu extrait de IXI-T1.tar)
+   data/IXI/raw/IXI002-Guys-0828-T1.nii.gz ...   (extracted from IXI-T1.tar)
    data/IXI/IXI.xls
    ```
-3. Convertir en BIDS (sortie dans `data/IXI/bids/`) :
+3. Convert to BIDS (output in `data/IXI/bids/`):
    ```bash
    python scripts/ixi_to_bids.py
    ```
-4. Vérifier le prétraitement sur une image par hôpital :
+4. Precompute the preprocessing (output in `data/IXI/bids_2mm/`):
+   ```bash
+   python scripts/cache_preprocessed.py
+   ```
+5. Check the preprocessing on one image per hospital:
    ```bash
    python scripts/train_ixi_site_shift.py --check
    ```
-5. Lancer l'entraînement (options : `--epochs`, `--batch-size`) :
+6. Train and evaluate (options: `--epochs`, `--batch-size`, `--lr`):
    ```bash
    python scripts/train_ixi_site_shift.py --test-site IOP
    ```
+7. Compute signed predictions and plots:
+   ```bash
+   python scripts/predict_ages.py --test-site IOP
+   ```
 
-Les résultats sont écrits dans `outputs/site_shift_test-IOP/`.
+Results are written to `outputs/site_shift_test-IOP/`.
 
-## Résultats
+## Results
 
-À venir. Les résultats préliminaires et les notes de travail sont dans [docs/journal.md](docs/journal.md).
+Coming soon. Preliminary results and working notes are in [docs/journal.md](docs/journal.md) (in French).
