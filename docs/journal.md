@@ -123,12 +123,31 @@ Signed error by age group:
 | HH | 382 | 7.93 | 25.22 | −25.17 | 0.80 |
 | Guys | 249 | 7.51 | 17.13 | +16.93 | 0.81 |
 
+## Image statistics per site (2026-10-28, no training)
+
+Computed locally on all 563 images: raw geometry, then intensity statistics inside the head (Otsu foreground, no skull stripping) after the current preprocessing; 3-class Otsu split of the head into dark / intermediate / bright tissue.
+
+| Median | Guys | HH | IOP |
+|---|---|---|---|
+| Matrix / voxel (mm) | 256×256×150 / 0.94×0.94×1.2 | 256×256×150 / 0.94×0.94×1.2 | 256×256×146 / 0.94×0.94×1.2 |
+| Head fraction of the volume (after preprocessing) | 0.234 | 0.226 | 0.181 |
+| Head volume kept (ml) | 3004 | 2897 | 2329 |
+| Mean / std inside head (z-units) | 1.39 / 0.59 | 1.46 / 0.58 | 1.57 / 0.83 |
+| Bright − intermediate | 0.94 | 0.78 | 1.81 |
+| Intermediate − dark | 0.70 | 0.64 | 0.86 |
+| Fraction of bright voxels | 0.13 | 0.21 | 0.08 |
+
+- **Same acquisition grid at all sites**, and Guys and HH have nearly identical head fraction and normalized mean/std: whole-volume normalization over background is **not** a plausible explanation for the Guys/HH shift.
+- **Each site has a distinct contrast fingerprint**: Guys and HH barely overlap on bright − intermediate contrast; IOP differs strongly from both (heavy bright tail, higher spread, smaller detected head volume).
+- These global measures are **nearly flat with age** within each site, and IOP (most different intensities) has the *smallest* shift: global intensity statistics do not explain the direction or size of the age bias. The cause is likely more local (how tissue contrast / atrophy appear on each scanner).
+- Caveat: without skull stripping, the "bright" class mixes white matter and scalp fat.
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
 - **On an unseen hospital the error is large and systematic, and its direction depends on the hospital**: HH is under-estimated (−25 years on average), Guys over-estimated (+17), IOP under-estimated only for older subjects. "An unseen hospital makes brains look younger" is therefore wrong.
 - **The ranking of subjects survives the shift** (r ≈ 0.7-0.8 on every unseen hospital): what breaks is a site-specific offset and slope (predicted ≈ a + b × true age, with a and b depending on the hospital).
-- Hypothesis (not tested): some image property that differs between scanners (intensity scale, contrast, amount of background) is partly read by the model as age. HH and Guys sit on opposite sides of it. Intensity normalization over the whole volume is the main technical suspect.
+- Hypothesis: some scanner-dependent image property is partly read by the model as age, with HH and Guys on opposite sides of it. The image statistics rule out field of view / background normalization for Guys vs HH and show clear per-site contrast fingerprints, but no global intensity measure explains the direction of the bias.
 - The hypothesis "IOP is younger, so the gap is a population effect" is contradicted by the IOP run: the IOP gap comes from its older subjects.
 - v2 improves both IOP MAEs over v1 and stabilizes training, but there is a single run each; differences of a few years may be chance.
 - A train/validation gap appears in v2 (≈ 2.5 vs ≈ 6-7 years RMSE / MAE), i.e. some overfitting.
@@ -140,7 +159,8 @@ Signed error by age group:
 - **Signed predictions for v1** (notebook cell 7 bis) to check whether v1 shows the same pattern.
 - **Swap roles**: `--test-site Guys` and `--test-site HH`, to see whether the effect is specific to IOP.
 - **Several seeds**: seeds are fixed to 42 (split and training); add a `--seed` option to measure run-to-run variability.
-- **Intensity normalization** (main suspect after the HH run): `ZNormalization` currently uses the whole volume, background and skull included, so differences in field of view, background or contrast between scanners shift the normalized brain intensities. Try foreground-masked z-normalization or histogram standardization, then rerun the IOP and HH tests.
+- **Intensity augmentation during training** (random gamma / contrast / bias field): first candidate after the image statistics, to make the model insensitive to each scanner's contrast fingerprint without re-preprocessing.
+- **Histogram standardization** (landmarks learned on the training sites) to align intensity distributions across sites. Foreground-masked z-normalization alone is unlikely to help (Guys and HH already have the same normalized mean/std).
 - **Linear recalibration on the new site**: since the ranking is preserved (r ≈ 0.8), check how much of the error a linear fit on a few labeled subjects of the new hospital removes.
 - **Look at the images**: compare intensity histograms and gray/white matter contrast of older subjects across hospitals, to test the scanner-contrast hypothesis.
 - **Bias correction**, standard in brain age studies (linear regression of the error on true age, fitted on validation).
