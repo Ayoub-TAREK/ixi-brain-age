@@ -137,7 +137,7 @@ def main():
             ModelCheckpointCallback(epochs=range(10, args.epochs + 1, 10)),
         ],
         metrics={"mae": MAEMetricConfig(label_key="AgeMRI")},
-        optimization=OptimizationConfig(epochs=args.epochs),
+        optimization=OptimizationConfig(num_epochs=args.epochs),
     )
     trainer.train(split=split, computational=computational)
 
