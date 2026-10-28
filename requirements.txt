@@ -1,0 +1,8 @@
+# Versions installées dans le .venv local (Windows, CPU)
+clinicadl==2.0.0
+torch==2.6.0
+monai==1.5.0
+torchio==0.20.23
+pandas==2.3.3
+xlrd==2.0.2
+matplotlib==3.11.2

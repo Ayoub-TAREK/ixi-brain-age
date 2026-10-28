@@ -1,0 +1,38 @@
+# Environnement Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Données IRM, poids de modèles et résultats : jamais versionnés
+data/
+outputs/
+*.tar
+*.nii
+*.nii.gz
+*.xls
+*.xlsx
+*.pt
+*.pth
+*.ckpt
+
+# Scripts locaux hors dépôt
+scripts/brain_age_test.py
+scripts/main_train.py
+scripts/make_synthetic_bids.py
+
+# Outils
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
