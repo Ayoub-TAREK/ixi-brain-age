@@ -90,19 +90,50 @@ Signed error by age group:
 | 65+ | 9 / 10.74 / −10.23 | 30 / 35.76 / −35.76 |
 
 - **All HH subjects are under-estimated**, increasingly with age. Predictions are compressed and shifted down (roughly predicted ≈ 15 + 0.4 × true age), yet the ranking is preserved (r = 0.80, as high as in-site).
-- Same failure mode as IOP (unseen hospital → brains look "younger"), but much stronger and affecting young subjects too.
+- Much stronger than the IOP shift and affecting young subjects too.
 - The plot of this run clipped a few HH predictions below 15 years (fixed since in `predict_ages.py`).
+
+## Run v2-Guys (2026-10-28): Guys held out
+
+- Same configuration as v2, but train on HH + IOP (249 subjects, 49 held out as internal test) and test on Guys (314 subjects).
+- Stopped at epoch 33. Validation curve very noisy (MAE ~7-23 years); small training and validation sets.
+- Drive folder: `outputs/site_shift_test-Guys`.
+
+| | MAE | Mean signed error | Pearson r |
+|---|---|---|---|
+| insite (HH + IOP) | **7.51 years** | +5.27 | 0.91 |
+| outofsite (Guys) | **17.13 years** | +16.93 | 0.81 |
+
+Signed error by age group:
+
+| Age | insite: n / MAE / bias | Guys: n / MAE / bias |
+|---|---|---|
+| ≤ 35 | 20 / 10.27 / +9.87 | 68 / 29.48 / +29.48 |
+| 35-50 | 9 / 6.57 / +3.02 | 76 / 20.11 / +19.93 |
+| 50-65 | 10 / 5.96 / +3.37 | 103 / 12.90 / +12.86 |
+| 65+ | 10 / 4.36 / −0.01 | 67 / 7.71 / +7.05 |
+
+- **Guys subjects are over-estimated**, strongly for young subjects and less with age: the opposite direction from HH.
+
+## Summary of the held-out-hospital runs (v2 setup)
+
+| Held out | Train subjects | insite MAE | outofsite MAE | outofsite bias | outofsite r |
+|---|---|---|---|---|---|
+| IOP | 495 | 5.81 | 10.83 | −5.74 | 0.67 |
+| HH | 382 | 7.93 | 25.22 | −25.17 | 0.80 |
+| Guys | 249 | 7.51 | 17.13 | +16.93 | 0.81 |
 
 ## Interpretation so far
 
-- **The model learns on its training hospitals**: MAE ≈ 6 years vs 14 for the naive baseline, well calibrated, with the usual mild regression to the mean (young subjects slightly over-estimated, old ones slightly under-estimated).
-- **On the unseen hospital, the error is not uniform**: young IOP subjects are predicted as well as young Guys/HH subjects, but **older IOP subjects are systematically and strongly under-estimated** (every IOP subject above ~55 is predicted 20 to 45 years too young). Predicted IOP ages flatten out around 40-50 years.
-- The hypothesis "IOP is younger, so the gap is a population effect" is contradicted: the gap comes from the older IOP subjects.
-- Hypothesis (not tested): the ageing markers learned by the model (atrophy, gray/white matter contrast, ventricle size) look "younger" on IOP images, e.g. because of a different scanner contrast or intensity profile.
-- v2 improves both MAEs and stabilizes training, but this is a single run each; the difference may be partly due to chance.
-- New in v2: a train/validation gap (≈ 2.5 vs ≈ 6-7 years), i.e. overfitting is now visible.
+- **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
+- **On an unseen hospital the error is large and systematic, and its direction depends on the hospital**: HH is under-estimated (−25 years on average), Guys over-estimated (+17), IOP under-estimated only for older subjects. "An unseen hospital makes brains look younger" is therefore wrong.
+- **The ranking of subjects survives the shift** (r ≈ 0.7-0.8 on every unseen hospital): what breaks is a site-specific offset and slope (predicted ≈ a + b × true age, with a and b depending on the hospital).
+- Hypothesis (not tested): some image property that differs between scanners (intensity scale, contrast, amount of background) is partly read by the model as age. HH and Guys sit on opposite sides of it. Intensity normalization over the whole volume is the main technical suspect.
+- The hypothesis "IOP is younger, so the gap is a population effect" is contradicted by the IOP run: the IOP gap comes from its older subjects.
+- v2 improves both IOP MAEs over v1 and stabilizes training, but there is a single run each; differences of a few years may be chance.
+- A train/validation gap appears in v2 (≈ 2.5 vs ≈ 6-7 years RMSE / MAE), i.e. some overfitting.
 
-**Limitations**: one run per configuration, small IOP age groups above 50 (6 and 11 subjects), one hospital pair tested, no registration or skull stripping.
+**Limitations**: one run per configuration; training sets of different sizes (249-495 subjects); small age groups in some test sets; no registration or skull stripping.
 
 ## Next ideas
 
