@@ -134,7 +134,8 @@ def main():
         model=model,
         callbacks=[
             EarlyStoppingCallback(metric="mae", patience=10),
-            ModelCheckpointCallback(epochs=range(10, args.epochs + 1, 10)),
+            # sauve aussi le meilleur modèle en validation (MAE), évalué plus bas
+            ModelCheckpointCallback(metric="mae", epochs=range(10, args.epochs + 1, 10)),
         ],
         metrics={"mae": MAEMetricConfig(label_key="AgeMRI")},
         optimization=OptimizationConfig(num_epochs=args.epochs),
@@ -147,7 +148,7 @@ def main():
     for name, ds in [("in-site", in_site), ("out-of-site", out_of_site)]:
         print(f"\n=== Test {name} ({len(ds)} images) ===")
         trainer.test(
-            model_checkpoint="split-0_final",
+            model_checkpoint="split-0_best-mae",  # meilleure MAE de validation, pas la dernière epoch
             group_name=name,
             dataloader=DataLoader(ds),
             metrics=["mae"],
