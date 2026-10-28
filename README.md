@@ -67,4 +67,17 @@ Results are written to `outputs/site_shift_test-IOP/`.
 
 ## Results
 
-Coming soon. Preliminary results and working notes are in [docs/journal.md](docs/journal.md).
+Baseline (current preprocessing, no registration): each hospital is held out in turn. The model is trained on the two others and tested on unseen subjects from the training hospitals (in-site) and on the held-out hospital (out-of-site). Mean absolute error (MAE) in years:
+
+| Held-out hospital | In-site MAE | Out-of-site MAE | Out-of-site error |
+|---|---|---|---|
+| IOP | 5.8 | 10.8 | older subjects predicted too young |
+| HH | 7.9 | 25.2 | all subjects predicted too young |
+| Guys | 7.5 | 17.1 | all subjects predicted too old |
+
+For reference, always predicting the mean training age gives an MAE of about 14-16 years.
+
+- The model learns brain age on its training hospitals, but its error is **2 to 3 times higher on an unseen hospital**.
+- The error is **systematic, and its direction depends on the hospital**, while subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
+
+Next steps: Clinica `t1-linear` preprocessing, then data augmentation and unsupervised domain adaptation (e.g. DANN) to reduce the gap. Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
