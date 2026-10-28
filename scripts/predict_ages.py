@@ -44,6 +44,7 @@ def load_model(model_pt: Path, device: torch.device) -> AgeRegressor:
 @torch.no_grad()
 def predict(model: AgeRegressor, data: pd.DataFrame, device: torch.device) -> list[float]:
     dataset = make_dataset(data)
+    dataset.eval()  # never augment at prediction time
     preds = []
     for i in range(len(dataset)):
         img_obj = dataset[i].image
@@ -99,11 +100,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-site", default="IOP", choices=SITES)
     parser.add_argument("--run-dir", type=Path, default=None,
-                        help="dossier du run (défaut : outputs/site_shift_test-<site>)")
+                        help="dossier du run (défaut : outputs/site_shift_test-<site>[_aug])")
+    parser.add_argument("--augment", action="store_true", help="run trained with --augment (*_aug folder)")
     parser.add_argument("--checkpoint", default="best-mae", help="best-mae, final ou epoch-<n>")
     args = parser.parse_args()
 
-    run_dir = args.run_dir or BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}"
+    run_dir = args.run_dir or BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}{'_aug' if args.augment else ''}"
     models_dir = run_dir / "maps" / "training" / "split-0" / "models"
     model_pt = (models_dir / "best_models" / args.checkpoint if args.checkpoint.startswith("best")
                 else models_dir / "checkpoints" / args.checkpoint if args.checkpoint.startswith("epoch")

@@ -44,6 +44,35 @@ SITES = ["Guys", "HH", "IOP"]
 IMAGE_TRANSFORMS = []
 
 
+class RandomScannerContrast(tio.Transform):
+    """Training-only augmentation that simulates another scanner's tissue contrast.
+
+    The image is rescaled to [0, 1], a random gamma (contrast between tissues) and a smooth
+    bias field are applied, then the image is mapped back to its original intensity range:
+    with gamma = 1 and no bias field the image is unchanged, so augmented training images
+    stay on the same scale as validation / test images. The default gamma range (0.70-1.42)
+    is about twice the Guys / HH contrast difference measured in docs/journal.md.
+    """
+
+    def __init__(self, log_gamma: float = 0.35, bias_coefficients: float = 0.3, bias_p: float = 0.5, **kwargs):
+        super().__init__(**kwargs)
+        self.log_gamma = log_gamma
+        self.bias_field = tio.RandomBiasField(coefficients=bias_coefficients, p=bias_p)
+
+    def apply_transform(self, subject: tio.Subject) -> tio.Subject:
+        for image in subject.get_images(intensity_only=True):
+            x = image.data.float()
+            lo, hi = x.min(), x.max()
+            gamma = torch.empty(1).uniform_(-self.log_gamma, self.log_gamma).exp()
+            u = tio.ScalarImage(tensor=((x - lo) / (hi - lo)) ** gamma, affine=image.affine)
+            image.set_data(lo + (hi - lo) * self.bias_field(u).data)
+        return subject
+
+
+# Applied by ClinicaDL to training images only (validation and test images are never augmented)
+AUGMENTATIONS = [RandomScannerContrast(p=0.8)]
+
+
 class AgeRegressor(torch.nn.Module):
     """DenseNet qui prédit un âge normalisé z ; la sortie est remise en années (moyenne + écart-type * z).
 
@@ -61,13 +90,16 @@ class AgeRegressor(torch.nn.Module):
         return self.net(x) * self.age_std + self.age_mean
 
 
-def make_dataset(tsv: Path) -> BidsDataset:
+def make_dataset(tsv: Path, augment: bool = False) -> BidsDataset:
     return BidsDataset(
         bids=BIDS_DIR,
         file_type=BidsFileType(data_type="anat", suffix="T1w"),
         data=tsv,
         columns=["AgeMRI"],
-        transforms=TransformsHandler(image_transforms=IMAGE_TRANSFORMS),
+        transforms=TransformsHandler(
+            image_transforms=IMAGE_TRANSFORMS,
+            augmentations=AUGMENTATIONS if augment else [],
+        ),
     )
 
 
@@ -80,7 +112,9 @@ def check_preprocessing(out_dir: Path) -> None:
         first = table[table.site == site].head(1)          # 1er sujet de cet hôpital
         tsv = out_dir / f"check_{site}.tsv"
         first.to_csv(tsv, sep="\t", index=False)
-        sample = make_dataset(tsv)[0]
+        dataset = make_dataset(tsv)
+        dataset.eval()
+        sample = dataset[0]
 
         img_obj = sample.image if hasattr(sample, "image") else sample["image"]
         tensor = img_obj.data if hasattr(img_obj, "data") else img_obj
@@ -105,10 +139,12 @@ def main():
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--augment", action="store_true",
+                        help="random scanner-contrast augmentation during training (results in *_aug folder)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    out_dir = BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}"
+    out_dir = BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}{'_aug' if args.augment else ''}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.check:
@@ -130,7 +166,7 @@ def main():
     print(f"Hôpital jamais vu {args.test_site} : {(table.site == args.test_site).sum()} sujets")
 
     # 2. Split par patient dans les hôpitaux d'entraînement
-    dataset = make_dataset(train_tsv)
+    dataset = make_dataset(train_tsv, augment=args.augment)
     split_dir = make_split(train_tsv, n_test=0.2, seed=42)
     kfold_dir = make_kfold(split_dir / "train.tsv", n_splits=5, seed=42)
     split = next(iter(KFold(kfold_dir).get_splits(dataset)))  # on n'utilise que le 1er fold
@@ -143,6 +179,7 @@ def main():
     train_ages = table.merge(pool_ids, on=["participant_id", "session_id"])["AgeMRI"]
     print(f"Âge (train + val) : moyenne {train_ages.mean():.1f}, écart-type {train_ages.std():.1f}")
     print(f"Learning rate : {args.lr}")
+    print(f"Augmentation : {AUGMENTATIONS if args.augment else 'none'}")
     model = SupervisedModel(
         network=AgeRegressor(train_ages.mean(), train_ages.std()),
         loss=torch.nn.MSELoss(),

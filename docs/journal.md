@@ -142,6 +142,13 @@ Computed locally on all 563 images: raw geometry, then intensity statistics insi
 - These global measures are **nearly flat with age** within each site, and IOP (most different intensities) has the *smallest* shift: global intensity statistics do not explain the direction or size of the age bias. The cause is likely more local (how tissue contrast / atrophy appear on each scanner).
 - Caveat: without skull stripping, the "bright" class mixes white matter and scalp fat.
 
+## Run v3 (to launch): scanner-contrast augmentation
+
+- Same as v2, plus `--augment`: during training only, `RandomScannerContrast` rescales each image to [0, 1], applies a random gamma (log-uniform, 0.70-1.42) and, half of the time, a smooth bias field (coefficients 0.3), then maps the image back to its original intensity range. Applied with probability 0.8. Validation and test images are never augmented (ClinicaDL eval mode, checked).
+- Why not re-normalize after the gamma: the cached images were cropped / padded after z-normalization, so re-normalizing shifts intensities (max difference 1.1 z-units even at gamma = 1) and training images would no longer match validation / test images. Mapping back to the original range keeps gamma = 1 an exact identity (difference 2e-7).
+- Why this gamma range (calibrated on 12 Guys + 12 HH subjects, bright − intermediate contrast): gamma 0.7 → 1.4 moves the Guys median from 0.81 to 1.48 and HH from 0.68 to 1.18, i.e. about twice the Guys / HH gap (0.94 vs 0.78). IOP (1.81) stays out of reach of a reasonable gamma, so the augmentation may help less for IOP. Caveat: the range is close to TorchIO's default (log-gamma ±0.3), but its magnitude was sanity-checked on Guys and HH images, which are the held-out hospitals in two of the three runs. A strictly clean protocol would calibrate on the training hospitals of each run only.
+- Results in `outputs/site_shift_test-<site>_aug`; compare with the v2 summary table above.
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
