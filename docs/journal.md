@@ -142,12 +142,46 @@ Computed locally on all 563 images: raw geometry, then intensity statistics insi
 - These global measures are **nearly flat with age** within each site, and IOP (most different intensities) has the *smallest* shift: global intensity statistics do not explain the direction or size of the age bias. The cause is likely more local (how tissue contrast / atrophy appear on each scanner).
 - Caveat: without skull stripping, the "bright" class mixes white matter and scalp fat.
 
+## Clinica t1-linear preprocessing (2026-10-29)
+
+- Clinica 0.12.0 `t1-linear` on all 563 images, locally (WSL Ubuntu, CPU, ANTsPy backend, `--random_seed 42`): N4 bias field correction, affine registration to MNI152NLin2009cSym, crop to 169×208×179 at 1 mm. Script: `scripts/t1_linear_wsl.sh`, resumable batches of 18 subjects with a checkpoint each (~17 min per batch, ~3.4 min per subject at 6 images × 2 threads; ~8 h in total).
+- QC on 3 subjects (one per site): overlap of bright voxels with the MNI template (Dice) 0.87-0.91; IOP stays darker after t1-linear.
+- Pitfall: ANTsPy leaves ~180 MB of registration temp files per subject in `/tmp` and never deletes them. The first run filled the disk at 324/563 (58 GB). The script now gives each batch its own temp folder, emptied after the batch, and stops before a batch if less than 10 GB is free.
+- `scripts/t1linear_to_2mm.py` resamples the cropped images to 2 mm float32 (85×105×90, linear interpolation): 1.5 GB in total, uploaded to Drive as one `.tar`. At load time (`--data t1linear`): zero-padding to 96×112×96, then z-normalization.
+
+## Run t1-linear (2026-10-29): same experiments on t1-linear images
+
+- Same setup as v2 (DenseNet121, age normalized in the model, lr 1e-4, MSE loss, early stopping on validation MAE, `best-mae` checkpoint), only the input images change. Drive folders: `outputs/site_shift_test-<site>_t1linear`.
+- IOP run: stopped at epoch 20 (best epoch 9). The validation curve is again very noisy (MAE 6-21 years from one epoch to the next), so the best-epoch choice is partly luck.
+
+| Held out | insite MAE | outofsite MAE | outofsite bias | outofsite r | v2 outofsite MAE |
+|---|---|---|---|---|---|
+| IOP | 6.84 | 11.21 | −4.05 | 0.52 | 10.83 |
+| HH | 7.12 | **8.62** | +4.82 | 0.85 | 25.22 |
+| Guys | 7.04 | **8.87** | +2.51 | 0.75 | 17.13 |
+
+Out-of-site signed error by age group (bias in years):
+
+| Age | IOP: n / bias | HH: n / bias | Guys: n / bias |
+|---|---|---|---|
+| ≤ 35 | 31 / +6.20 | 56 / +14.94 | 68 / +14.19 |
+| 35-50 | 20 / −3.20 | 38 / +6.23 | 76 / +6.53 |
+| 50-65 | 6 / −15.91 | 57 / −0.75 | 103 / −1.21 |
+| 65+ | 11 / −28.04 | 30 / −5.30 | 67 / −8.19 |
+
+- **t1-linear removes most of the HH and Guys shift**: out-of-site MAE 25.2 → 8.6 (HH) and 17.1 → 8.9 (Guys), close to the in-site MAE (≈ 7). These drops are far larger than the run-to-run noise.
+- The remaining HH / Guys error has the same shape as the in-site error (young subjects over-estimated, older ones under-estimated): regression to the mean, no longer a site-specific offset.
+- **IOP is not fixed**: older IOP subjects are still strongly under-estimated (−28 years after 65) and the correlation drops (0.52). IOP has the most different contrast fingerprint (bright − intermediate 1.81 vs 0.78-0.94), which registration and N4 do not change.
+- In-site MAE is similar to v2 (6.8-7.1 vs 5.8-7.9).
+- Caveat: t1-linear combines N4 and affine registration; which of the two removes the Guys / HH shift is not known (an ablation could separate them). Single seed per run.
+
 ## Run v3 (to launch): scanner-contrast augmentation
 
 - Same as v2, plus `--augment`: during training only, `RandomScannerContrast` rescales each image to [0, 1], applies a random gamma (log-uniform, 0.70-1.42) and, half of the time, a smooth bias field (coefficients 0.3), then maps the image back to its original intensity range. Applied with probability 0.8. Validation and test images are never augmented (ClinicaDL eval mode, checked).
 - Why not re-normalize after the gamma: the cached images were cropped / padded after z-normalization, so re-normalizing shifts intensities (max difference 1.1 z-units even at gamma = 1) and training images would no longer match validation / test images. Mapping back to the original range keeps gamma = 1 an exact identity (difference 2e-7).
 - Why this gamma range (calibrated on 12 Guys + 12 HH subjects, bright − intermediate contrast): gamma 0.7 → 1.4 moves the Guys median from 0.81 to 1.48 and HH from 0.68 to 1.18, i.e. about twice the Guys / HH gap (0.94 vs 0.78). IOP (1.81) stays out of reach of a reasonable gamma, so the augmentation may help less for IOP. Caveat: the range is close to TorchIO's default (log-gamma ±0.3), but its magnitude was sanity-checked on Guys and HH images, which are the held-out hospitals in two of the three runs. A strictly clean protocol would calibrate on the training hospitals of each run only.
 - Results in `outputs/site_shift_test-<site>_aug`; compare with the v2 summary table above.
+- After the t1-linear results, the more useful run is augmentation **on t1-linear images** (`--data t1linear --augment`, folders `..._t1linear_aug`): the geometric part of the shift is already removed, and IOP's remaining problem is contrast, which is what this augmentation targets.
 
 ## Interpretation so far
 
@@ -158,10 +192,20 @@ Computed locally on all 563 images: raw geometry, then intensity statistics insi
 - The hypothesis "IOP is younger, so the gap is a population effect" is contradicted by the IOP run: the IOP gap comes from its older subjects.
 - v2 improves both IOP MAEs over v1 and stabilizes training, but there is a single run each; differences of a few years may be chance.
 - A train/validation gap appears in v2 (≈ 2.5 vs ≈ 6-7 years RMSE / MAE), i.e. some overfitting.
+- **Update after t1-linear**: the Guys / HH shift was mostly geometric or bias-field related (removed by N4 + affine registration), not a global intensity effect. Two kinds of shift remain distinct: preprocessing fixes HH and Guys, while IOP's shift (contrast) survives it.
 
-**Limitations**: one run per configuration; training sets of different sizes (249-495 subjects); small age groups in some test sets; no registration or skull stripping.
+**Limitations**: one run per configuration; training sets of different sizes (249-495 subjects); small age groups in some test sets; no skull stripping; very noisy validation curves (the best-epoch choice is partly luck).
 
 ## Next ideas
+
+After t1-linear, in order:
+
+- **Stabilize training** before comparing methods: learning-rate scheduler, possibly larger batches or GroupNorm instead of BatchNorm, and several seeds per configuration.
+- **Augmentation on t1-linear images** (`--data t1linear --augment`), aimed at IOP's contrast shift.
+- **AdaBN** (recompute BatchNorm statistics on the unlabeled target images), then **DANN**.
+- **Ablation N4 vs registration**, to know which step removes the Guys / HH shift.
+
+Earlier ideas (before t1-linear):
 
 - **Signed predictions for v1** (notebook cell 7 bis) to check whether v1 shows the same pattern.
 - **Swap roles**: `--test-site Guys` and `--test-site HH`, to see whether the effect is specific to IOP.

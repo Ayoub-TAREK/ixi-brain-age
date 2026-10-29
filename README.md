@@ -2,17 +2,20 @@
 
 Brain age prediction from T1-weighted MRI of the [IXI](https://brain-development.org/ixi-dataset/) dataset, using [ClinicaDL 2.0](https://clinicadl.readthedocs.io/) and a 3D DenseNet (MONAI).
 
-The goal is to measure the effect of a **domain shift between hospitals** (site shift):
+The goal is to measure, and then reduce, the effect of a **domain shift between hospitals** (site shift). IXI comes from 3 London hospitals (Guys, HH, IOP); each one is held out in turn:
 
-- training on the **Guys** and **HH** hospitals (subject-level split: train / validation / internal test);
-- evaluation on the internal test set (same hospitals, unseen subjects);
-- evaluation on the **IOP** hospital, never seen during training.
+- training on the two other hospitals (subject-level split: train / validation / internal test);
+- evaluation on the internal test set (same hospitals, unseen subjects): **in-site**;
+- evaluation on the held-out hospital, never seen during training: **out-of-site**.
 
-## Preprocessing check
+## Preprocessing
 
-Preprocessing is computed once by `scripts/cache_preprocessed.py` (2 mm images in `data/IXI/bids_2mm`), which speeds up training.
+Two preprocessings of the same images are compared:
 
-One image per hospital after preprocessing (output of `--check`):
+- **Baseline**: resampling to 2 mm, z-normalization and crop, computed once by `scripts/cache_preprocessed.py` (`data/IXI/bids_2mm`). No registration.
+- **Clinica t1-linear**: N4 bias field correction and affine registration to the MNI template, run locally by `scripts/t1_linear_wsl.sh` (~8 h on CPU for 563 images), then resampled to 2 mm by `scripts/t1linear_to_2mm.py` (`data/IXI/caps_t1linear_2mm`). Selected with `--data t1linear`.
+
+One image per hospital after the baseline preprocessing (output of `--check`):
 
 | Guys | HH | IOP |
 |:---:|:---:|:---:|
@@ -22,7 +25,9 @@ One image per hospital after preprocessing (output of `--check`):
 
 ```
 scripts/ixi_to_bids.py                IXI -> BIDS conversion + age table
-scripts/cache_preprocessed.py         one-off preprocessing (2 mm, normalization, crop)
+scripts/cache_preprocessed.py         one-off baseline preprocessing (2 mm, normalization, crop)
+scripts/t1_linear_wsl.sh              Clinica t1-linear on all subjects (Linux / WSL, resumable batches)
+scripts/t1linear_to_2mm.py            2 mm copy of the t1-linear images
 scripts/train_ixi_site_shift.py       training and in-site / out-of-site evaluation
 scripts/predict_ages.py               signed predictions (predicted - true age) and plots
 notebooks/ixi_brain_age_colab.ipynb   end-to-end run on Google Colab
@@ -65,19 +70,22 @@ The IXI data is **not included** in this repository. Download it from the offici
 
 Results are written to `outputs/site_shift_test-IOP/`.
 
+For the t1-linear images: run Clinica t1-linear with `bash scripts/t1_linear_wsl.sh` (Linux / WSL, Clinica installed in `~/clinica_env`), then add `--data t1linear` to steps 5-7 (results in `outputs/site_shift_test-<site>_t1linear/`).
+
 ## Results
 
-Baseline (current preprocessing, no registration): each hospital is held out in turn. The model is trained on the two others and tested on unseen subjects from the training hospitals (in-site) and on the held-out hospital (out-of-site). Mean absolute error (MAE) in years:
+Each hospital is held out in turn. Mean absolute error (MAE) in years:
 
-| Held-out hospital | In-site MAE | Out-of-site MAE | Out-of-site error |
-|---|---|---|---|
-| IOP | 5.8 | 10.8 | older subjects predicted too young |
-| HH | 7.9 | 25.2 | all subjects predicted too young |
-| Guys | 7.5 | 17.1 | all subjects predicted too old |
+| Held-out hospital | In-site (baseline) | Out-of-site (baseline) | In-site (t1-linear) | Out-of-site (t1-linear) |
+|---|---|---|---|---|
+| IOP | 5.8 | 10.8 | 6.8 | 11.2 |
+| HH | 7.9 | **25.2** | 7.1 | **8.6** |
+| Guys | 7.5 | **17.1** | 7.0 | **8.9** |
 
 For reference, always predicting the mean training age gives an MAE of about 14-16 years.
 
-- The model learns brain age on its training hospitals, but its error is **2 to 3 times higher on an unseen hospital**.
-- The error is **systematic, and its direction depends on the hospital**, while subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
+- **Baseline**: the error is 2 to 3 times higher on an unseen hospital, and systematic: HH subjects are all predicted too young, Guys subjects too old, older IOP subjects too young. Subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
+- **t1-linear** (bias field correction + registration) **removes most of the HH and Guys shift**: their out-of-site error becomes close to the in-site error.
+- **IOP is not fixed**: older IOP subjects are still predicted much too young. IOP has a very different tissue contrast, which registration does not change.
 
-Next steps: Clinica `t1-linear` preprocessing, then data augmentation and unsupervised domain adaptation (e.g. DANN) to reduce the gap. Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
+Next steps: stabilize training (noisy validation curves, several seeds), contrast augmentation on t1-linear images (aimed at IOP), then unsupervised domain adaptation (AdaBN, DANN). Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
