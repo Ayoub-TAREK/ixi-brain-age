@@ -8,8 +8,10 @@ Expérience :
 
 Lancer :  python scripts/train_ixi_site_shift.py --test-site IOP
           python scripts/train_ixi_site_shift.py --check   (vérifie le prétraitement sur 1 image)
+          python scripts/train_ixi_site_shift.py --test-site IOP --data t1linear   (Clinica t1-linear images)
 
-Nécessite la sortie de scripts/cache_preprocessed.py dans data/IXI/bids_2mm.
+--data bids2mm  (default) needs scripts/cache_preprocessed.py output in data/IXI/bids_2mm.
+--data t1linear needs data/IXI/caps_t1linear_2mm (scripts/t1_linear_wsl.sh); results go to *_t1linear folders.
 Les corrections d'API trouvées sur brain_age_test.py sont reprises ici.
 """
 
@@ -34,14 +36,28 @@ from clinicadl.train import ComputationalConfig, Trainer
 from clinicadl.transforms import TransformsHandler
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-BIDS_DIR = BASE_DIR / "data" / "IXI" / "bids_2mm"
-ALL_TSV = BIDS_DIR / "participants_sessions_age.tsv"
+DATA_DIR = BASE_DIR / "data" / "IXI"
 SITES = ["Guys", "HH", "IOP"]
 
-# Le prétraitement (ToCanonical, Resample 2 mm, ZNormalization, CropOrPad 112x128x112) est déjà
-# appliqué une fois pour toutes par scripts/cache_preprocessed.py.
-# C'est ici qu'on ajoutera les futures augmentations de données.
-IMAGE_TRANSFORMS = []
+# Two preprocessings of the same 563 images: (folder, files to read, transforms applied at load time).
+# Both folders contain participants_sessions_age.tsv.
+INPUTS = {
+    # ToCanonical, Resample 2 mm, ZNormalization, CropOrPad 112x128x112, already applied once and for all
+    # by scripts/cache_preprocessed.py
+    "bids2mm": (DATA_DIR / "bids_2mm", BidsFileType(data_type="anat", suffix="T1w"), []),
+    # Clinica t1-linear (N4 bias correction, affine registration to MNI, crop), then 2 mm (85x105x90) by
+    # scripts/t1linear_to_2mm.py: padded to a size divisible by 16 (zeros = background), then z-normalized
+    "t1linear": (
+        DATA_DIR / "caps_t1linear_2mm",
+        BidsFileType(data_type="t1_linear", suffix="T1w",
+                     with_entities={"space": "MNI152NLin2009cSym", "desc": "Crop", "res": "2x2x2"}),
+        [tio.CropOrPad((96, 112, 96)), tio.ZNormalization()],
+    ),
+}
+
+
+def age_table_path(data: str = "bids2mm") -> Path:
+    return INPUTS[data][0] / "participants_sessions_age.tsv"
 
 
 class RandomScannerContrast(tio.Transform):
@@ -90,36 +106,38 @@ class AgeRegressor(torch.nn.Module):
         return self.net(x) * self.age_std + self.age_mean
 
 
-def make_dataset(tsv: Path, augment: bool = False) -> BidsDataset:
+def make_dataset(tsv: Path, augment: bool = False, data: str = "bids2mm") -> BidsDataset:
+    folder, file_type, image_transforms = INPUTS[data]
     return BidsDataset(
-        bids=BIDS_DIR,
-        file_type=BidsFileType(data_type="anat", suffix="T1w"),
+        bids=folder,
+        file_type=file_type,
         data=tsv,
         columns=["AgeMRI"],
         transforms=TransformsHandler(
-            image_transforms=IMAGE_TRANSFORMS,
+            image_transforms=image_transforms,
             augmentations=AUGMENTATIONS if augment else [],
         ),
     )
 
 
-def check_preprocessing(out_dir: Path) -> None:
+def check_preprocessing(out_dir: Path, data: str = "bids2mm") -> None:
     """Sauve 3 coupes centrales d'un sujet par hôpital pour vérifier le cadrage."""
     import matplotlib.pyplot as plt
 
-    table = pd.read_csv(ALL_TSV, sep="\t")
+    table = pd.read_csv(age_table_path(data), sep="\t")
     for site in SITES:
         first = table[table.site == site].head(1)          # 1er sujet de cet hôpital
         tsv = out_dir / f"check_{site}.tsv"
         first.to_csv(tsv, sep="\t", index=False)
-        dataset = make_dataset(tsv)
+        dataset = make_dataset(tsv, data=data)
         dataset.eval()
         sample = dataset[0]
 
         img_obj = sample.image if hasattr(sample, "image") else sample["image"]
         tensor = img_obj.data if hasattr(img_obj, "data") else img_obj
         img = tensor.squeeze().numpy()
-        print(f"{site} - {sample.participant_id} : forme {img.shape}")
+        print(f"{site} - {sample.participant_id} : forme {img.shape}, "
+              f"moyenne {img.mean():.2f}, écart-type {img.std():.2f}")
 
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         slices = [img[img.shape[0] // 2], img[:, img.shape[1] // 2], img[:, :, img.shape[2] // 2]]
@@ -133,6 +151,12 @@ def check_preprocessing(out_dir: Path) -> None:
         print(f"  -> {path}")
 
 
+def run_dir_path(test_site: str, augment: bool = False, data: str = "bids2mm") -> Path:
+    """outputs/site_shift_test-<site>[_t1linear][_aug]: the bids2mm folders keep their original names."""
+    suffix = ("" if data == "bids2mm" else f"_{data}") + ("_aug" if augment else "")
+    return BASE_DIR / "outputs" / f"site_shift_test-{test_site}{suffix}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-site", default="IOP", choices=SITES)
@@ -141,14 +165,16 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--augment", action="store_true",
                         help="random scanner-contrast augmentation during training (results in *_aug folder)")
+    parser.add_argument("--data", default="bids2mm", choices=list(INPUTS),
+                        help="input images: bids2mm (own 2 mm preprocessing) or t1linear (Clinica t1-linear)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    out_dir = BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}{'_aug' if args.augment else ''}"
+    out_dir = run_dir_path(args.test_site, args.augment, args.data)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.check:
-        check_preprocessing(out_dir)
+        check_preprocessing(out_dir, args.data)
         return
 
     gpu = torch.cuda.is_available()
@@ -156,7 +182,7 @@ def main():
     print(f"GPU : {gpu}")
 
     # 1. Séparer hôpitaux d'entraînement / hôpital de test
-    table = pd.read_csv(ALL_TSV, sep="\t")
+    table = pd.read_csv(age_table_path(args.data), sep="\t")
     train_sites = [s for s in SITES if s != args.test_site]
     train_tsv = out_dir / "train_sites.tsv"
     ood_tsv = out_dir / "out_of_site.tsv"
@@ -166,7 +192,7 @@ def main():
     print(f"Hôpital jamais vu {args.test_site} : {(table.site == args.test_site).sum()} sujets")
 
     # 2. Split par patient dans les hôpitaux d'entraînement
-    dataset = make_dataset(train_tsv, augment=args.augment)
+    dataset = make_dataset(train_tsv, augment=args.augment, data=args.data)
     split_dir = make_split(train_tsv, n_test=0.2, seed=42)
     kfold_dir = make_kfold(split_dir / "train.tsv", n_splits=5, seed=42)
     split = next(iter(KFold(kfold_dir).get_splits(dataset)))  # on n'utilise que le 1er fold
@@ -179,6 +205,7 @@ def main():
     train_ages = table.merge(pool_ids, on=["participant_id", "session_id"])["AgeMRI"]
     print(f"Âge (train + val) : moyenne {train_ages.mean():.1f}, écart-type {train_ages.std():.1f}")
     print(f"Learning rate : {args.lr}")
+    print(f"Images : {args.data} ({INPUTS[args.data][0].name})")
     print(f"Augmentation : {AUGMENTATIONS if args.augment else 'none'}")
     model = SupervisedModel(
         network=AgeRegressor(train_ages.mean(), train_ages.std()),
@@ -201,7 +228,7 @@ def main():
 
     # 4. Évaluations : même hôpitaux vs hôpital jamais vu
     in_site = dataset.subset(split_dir / "test_baseline.tsv")
-    out_of_site = make_dataset(ood_tsv)
+    out_of_site = make_dataset(ood_tsv, data=args.data)
     for name, ds in [("insite", in_site), ("outofsite", out_of_site)]:
         print(f"\n=== Test {name} ({len(ds)} images) ===")
         trainer.test(

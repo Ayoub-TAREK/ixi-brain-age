@@ -24,7 +24,7 @@ import pandas as pd
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train_ixi_site_shift import ALL_TSV, BASE_DIR, SITES, AgeRegressor, make_dataset
+from train_ixi_site_shift import INPUTS, SITES, AgeRegressor, age_table_path, make_dataset, run_dir_path
 
 AGE_BINS = [0, 35, 50, 65, 100]
 IDS = ["participant_id", "session_id"]
@@ -42,8 +42,8 @@ def load_model(model_pt: Path, device: torch.device) -> AgeRegressor:
 
 
 @torch.no_grad()
-def predict(model: AgeRegressor, data: pd.DataFrame, device: torch.device) -> list[float]:
-    dataset = make_dataset(data)
+def predict(model: AgeRegressor, data: pd.DataFrame, device: torch.device, images: str = "bids2mm") -> list[float]:
+    dataset = make_dataset(data, data=images)
     dataset.eval()  # never augment at prediction time
     preds = []
     for i in range(len(dataset)):
@@ -102,10 +102,12 @@ def main():
     parser.add_argument("--run-dir", type=Path, default=None,
                         help="dossier du run (défaut : outputs/site_shift_test-<site>[_aug])")
     parser.add_argument("--augment", action="store_true", help="run trained with --augment (*_aug folder)")
+    parser.add_argument("--data", default="bids2mm", choices=list(INPUTS),
+                        help="images the run was trained on (t1linear: *_t1linear folder)")
     parser.add_argument("--checkpoint", default="best-mae", help="best-mae, final ou epoch-<n>")
     args = parser.parse_args()
 
-    run_dir = args.run_dir or BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}{'_aug' if args.augment else ''}"
+    run_dir = args.run_dir or run_dir_path(args.test_site, args.augment, args.data)
     models_dir = run_dir / "maps" / "training" / "split-0" / "models"
     model_pt = (models_dir / "best_models" / args.checkpoint if args.checkpoint.startswith("best")
                 else models_dir / "checkpoints" / args.checkpoint if args.checkpoint.startswith("epoch")
@@ -114,7 +116,7 @@ def main():
     print(f"Modèle : {model_pt}  ({device})")
     model = load_model(model_pt, device)
 
-    table = pd.read_csv(ALL_TSV, sep="\t")
+    table = pd.read_csv(age_table_path(args.data), sep="\t")
     groups = {
         "insite": pd.read_csv(run_dir / "split" / "test_baseline.tsv", sep="\t")[IDS],
         "outofsite": pd.read_csv(run_dir / "out_of_site.tsv", sep="\t")[IDS],
@@ -123,7 +125,7 @@ def main():
     for group, ids in groups.items():
         data = table.merge(ids, on=IDS)
         print(f"\nPrédiction {group} ({len(data)} images)")
-        data["predicted"] = predict(model, data, device)
+        data["predicted"] = predict(model, data, device, args.data)
         data["group"] = group
         results.append(data)
 
