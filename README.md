@@ -70,22 +70,22 @@ The IXI data is **not included** in this repository. Download it from the offici
 
 Results are written to `outputs/site_shift_test-IOP/`.
 
-For the t1-linear images: run Clinica t1-linear with `bash scripts/t1_linear_wsl.sh` (Linux / WSL, Clinica installed in `~/clinica_env`), then add `--data t1linear` to steps 5-7 (results in `outputs/site_shift_test-<site>_t1linear/`).
+For the t1-linear images: run Clinica t1-linear with `bash scripts/t1_linear_wsl.sh` (Linux / WSL, Clinica installed in `~/clinica_env`), then add `--data t1linear` to steps 5-7 (results in `outputs/site_shift_test-<site>_t1linear/`). Add `--augment` to steps 6-7 for the contrast augmentation (results in `..._t1linear_aug/`).
 
 ## Results
 
-Each hospital is held out in turn. Mean absolute error (MAE) in years:
+Each hospital is held out in turn. Out-of-site mean absolute error (MAE) in years, i.e. on the hospital never seen in training (in-site MAE in parentheses):
 
-| Held-out hospital | In-site (baseline) | Out-of-site (baseline) | In-site (t1-linear) | Out-of-site (t1-linear) |
-|---|---|---|---|---|
-| IOP | 5.8 | 10.8 | 6.8 | 11.2 |
-| HH | 7.9 | **25.2** | 7.1 | **8.6** |
-| Guys | 7.5 | **17.1** | 7.0 | **8.9** |
+| Held-out hospital | v1: baseline | v2: t1-linear | v3a: t1-linear + contrast augmentation |
+|---|---|---|---|
+| IOP | 10.8 (5.8) | 11.2 (6.8) | **8.8** (5.7) |
+| HH | 25.2 (7.9) | **8.6** (7.1) | 9.3 (7.9) |
+| Guys | 17.1 (7.5) | **8.9** (7.0) | 10.9 (7.0) |
 
 For reference, always predicting the mean training age gives an MAE of about 14-16 years.
 
-- **Baseline**: the error is 2 to 3 times higher on an unseen hospital, and systematic: HH subjects are all predicted too young, Guys subjects too old, older IOP subjects too young. Subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
-- **t1-linear** (bias field correction + registration) **removes most of the HH and Guys shift**: their out-of-site error becomes close to the in-site error.
-- **IOP is not fixed**: older IOP subjects are still predicted much too young. IOP has a very different tissue contrast, which registration does not change.
+- **v1, baseline**: the error is 2 to 3 times higher on an unseen hospital, and systematic: HH subjects are all predicted too young, Guys subjects too old, older IOP subjects too young. Subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
+- **v2, Clinica t1-linear** (bias field correction + registration) **removes most of the HH and Guys shift**: their out-of-site error becomes close to the in-site error. IOP is not fixed: it has a very different tissue contrast, which registration does not change.
+- **v3a, contrast augmentation** (random gamma and bias field during training) **fixes much of the IOP shift** (correlation 0.52 → 0.82), and does not help HH and Guys, whose remaining error is mostly an offset that varies from run to run.
 
-Next steps: stabilize training (noisy validation curves, several seeds), contrast augmentation on t1-linear images (aimed at IOP), then unsupervised domain adaptation (AdaBN, DANN). Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
+Next steps: stabilize training (noisy validation curves, several seeds), then unsupervised domain adaptation (AdaBN, DANN). Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
