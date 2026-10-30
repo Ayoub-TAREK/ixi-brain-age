@@ -299,6 +299,35 @@ All runs start from the final model of `IOP_t1linear_aug_plateau` (seed 42); 316
 - **Conclusion for IOP**: no unsupervised adaptation method beats not adapting. IOP differs both in scanner (contrast) and in population (7 years younger); from images alone, aligning the scanner difference also erases part of the age difference. Robust on one seed: the 4-year degradation of DANN λ 0.3 with its dose-response, and the halving of the bias by IW. Not robust: IW-DANN vs control.
 - Next run (notebook `site_dann_pipeline.ipynb`): the same on **HH**, whose population is close to the training hospitals' (gap 1.9 years vs 7.1 for IOP) and where AdaBN helped. Prediction: DANN should help, or at least not hurt, on HH.
 
+### DANN results: HH held out, seed 42 (2026-10-31)
+
+New source model `HH_t1linear_aug_plateau` (seed 42, final model), then the same DANN configurations (notebook `site_dann_pipeline.ipynb`, ~2.5 h in total).
+
+| Method | insite MAE | outofsite MAE | bias | r | domain acc (end) | mean predicted HH age (end) |
+|---|---|---|---|---|---|---|
+| source model (final) | 6.84 | 8.34 | −2.31 | 0.83 | | |
+| + AdaBN | 6.84 | **7.78** | −0.92 | 0.83 | | |
+| control (λ = 0) | 6.36 | 8.12 | −0.70 | 0.87 | 0.88 | 46.7 |
+| DANN λ = 0.3 | 6.45 | 8.01 | −3.03 | 0.86 | 0.51 | 44.3 |
+| IW-DANN λ = 0.3 | 6.45 | 8.51 | −4.77 | 0.86 | 0.49 | 42.6 |
+
+(True mean age: HH 47.4, training hospitals 49.3; for interpretation only.)
+
+- **The prediction holds: DANN does not hurt HH.** Compared with its control, DANN λ 0.3 changes the out-of-site MAE by −0.1 year on HH (+4.2 on IOP) and moves the mean predicted target age by −2 years (+14 on IOP), with the same alignment in both cases (domain accuracy ≈ 0.5). Same method, same setting, opposite effect depending on the age gap between populations: the strongest evidence for the label-shift explanation.
+- **No method clearly improves HH**: all results lie within 7.8-8.5 (0.7 year, below the seed-to-seed noise). AdaBN is again the best on HH. t1-linear had already removed most of HH's shift.
+- Without alignment, the domain classifier reaches 0.88 on HH vs 0.96 on IOP: after t1-linear, HH is closer to the training hospitals than IOP.
+- **IW-DANN over-corrects on HH, and its weights show why**: over the 30 epochs, the oldest bin's weight stays at the lower bound (0.25), the youngest bin's at 0.25-0.9, and the middle bins' around 1.3-2.2. The method estimates that HH has few very young or very old patients, which is wrong (ages 20-86). Cause: predicted ages are compressed toward the mean (regression to the mean), so their histogram is narrower than the true age distribution, and the importance weights under-weight both ends. The weights fluctuate without drifting, so this is not the feedback loop suspected on IOP but a more basic limitation of estimating a regression target's distribution from raw predictions. It probably also explains why IW-DANN only half-corrected IOP. Possible fixes: de-shrink the predictions before the histogram (fitted on source validation: true vs predicted age), or a confusion-matrix correction (black-box shift estimation) on age bins.
+
+### Conclusion of the domain adaptation experiments
+
+| Shift | What fixes it | What fails |
+|---|---|---|
+| geometry / bias field (HH, Guys in v1) | Clinica t1-linear (HH 25.2 → 8.6, Guys 17.1 → 8.9) | |
+| contrast (IOP) | contrast augmentation, partly (correlation 0.52 → 0.66-0.82) | |
+| population: different age distribution (IOP, 7 years younger) | none of the tested methods | alignment (AdaBN, DANN) pulls the target towards the source population; IW-DANN halves the effect, limited by the compressed predicted ages |
+
+On the unseen hospital whose population matches the training hospitals (HH), alignment methods are neutral to slightly helpful (AdaBN 7.8 vs 8.3); on the one whose population differs (IOP), they hurt, in proportion to the alignment strength.
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
@@ -319,9 +348,9 @@ All runs start from the final model of `IOP_t1linear_aug_plateau` (seed 42); 316
 After v2, v3a and AdaBN, in order:
 
 - **Stabilize training** before comparing methods: learning-rate scheduler, possibly larger batches or GroupNorm instead of BatchNorm, and several seeds per configuration.
-- **DANN on HH** (running), then possibly Guys: does alignment help when there is little label shift?
-- **More seeds** for the control and IW-DANN on IOP (the 1.6-year gap is within the noise).
-- **Better target age estimate for IW-DANN**: estimate the target age distribution once from the source model (before alignment) and keep it fixed, to break the feedback loop; or use black-box shift estimation (confusion-matrix correction).
+- **More seeds** for the control, DANN and IW-DANN on IOP and HH (most single-seed gaps are within the noise).
+- **Better target age estimate for IW-DANN**: de-shrink the predicted ages before estimating the target distribution (linear correction fitted on source validation), or black-box shift estimation on age bins; possibly estimate it once before alignment and keep it fixed.
+- **DANN on Guys** (older than its training hospitals by 4.8 years: prediction, DANN pulls Guys predictions younger).
 - **AdaBN without transduction**: re-estimate the statistics on half of the target images and evaluate on the other half.
 - **Faster augmentation**: compute the bias field on a coarse grid and upsample it.
 - **Ablation N4 vs registration**, to know which step removes the Guys / HH shift.

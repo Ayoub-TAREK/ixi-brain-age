@@ -1,15 +1,16 @@
 """
-Prédictions signées (âge prédit - âge réel) du modèle entraîné par train_ixi_site_shift.py.
+Signed predictions (predicted - true age) of a model trained by train_ixi_site_shift.py.
 
-ClinicaDL 2.0 n'enregistre que l'erreur absolue lors du test : ce script recharge le checkpoint
-et calcule l'âge prédit de chaque sujet des groupes insite (test interne) et outofsite.
+ClinicaDL 2.0 only saves the absolute error at test time: this script reloads the checkpoint
+and computes the predicted age of every subject of the insite (internal test) and outofsite groups.
 
-Sorties dans le dossier du run :
+Outputs in the run folder:
   predictions_<checkpoint>.tsv   participant_id, session_id, site, group, AgeMRI, predicted, error
-  predictions_<checkpoint>.png   âge prédit vs réel, et erreur vs âge réel
-  validation_curve.png           MAE de validation par epoch
+  predictions_<checkpoint>.png   predicted vs true age, and error vs true age
+  validation_curve.png           validation MAE per epoch
 
-Lancer :  python scripts/predict_ages.py --test-site IOP
+Run:  python scripts/predict_ages.py --test-site IOP [--data t1linear --augment --scheduler plateau --seed <n>]
+                                                  [--checkpoint final]
 """
 
 import argparse
@@ -41,7 +42,7 @@ def model_path(run_dir: Path, checkpoint: str) -> Path:
 def load_model(model_pt: Path, device: torch.device) -> AgeRegressor:
     state = torch.load(model_pt, map_location="cpu")
     state = {k.removeprefix("network."): v for k, v in state.items()}
-    if "age_mean" not in state:  # premier modèle (v1) : DenseNet qui sort directement l'âge
+    if "age_mean" not in state:  # first model (v1a): a DenseNet that outputs the age directly
         state = {f"net.{k}": v for k, v in state.items()}
         state |= {"age_mean": torch.tensor(0.0), "age_std": torch.tensor(1.0)}
     model = AgeRegressor()
@@ -67,10 +68,10 @@ def summarize(df: pd.DataFrame) -> None:
     for group, d in df.groupby("group", sort=False):
         r = d.AgeMRI.corr(d.predicted)
         print(f"\n{group} : n={len(d)}  MAE={d.error.abs().mean():.2f}  "
-              f"biais moyen={d.error.mean():+.2f} ans  r={r:.2f}")
+              f"mean bias={d.error.mean():+.2f} years  r={r:.2f}")
         by_age = d.groupby(pd.cut(d.AgeMRI, AGE_BINS), observed=True)["error"]
         table = pd.DataFrame({"n": by_age.size(), "MAE": by_age.apply(lambda e: e.abs().mean()),
-                              "biais": by_age.mean()})
+                              "bias": by_age.mean()})
         print(table.round(2).to_string())
 
 
@@ -82,9 +83,9 @@ def plot(df: pd.DataFrame, title: str, path: Path) -> None:
     values = df[["AgeMRI", "predicted"]]
     lims = [min(15, values.min().min() - 2), max(90, values.max().max() + 2)]
     ax1.plot(lims, lims, "k--", lw=1)
-    ax1.set(xlabel="Âge réel", ylabel="Âge prédit", xlim=lims, ylim=lims, title="Âge prédit vs réel")
+    ax1.set(xlabel="True age", ylabel="Predicted age", xlim=lims, ylim=lims, title="Predicted vs true age")
     ax2.axhline(0, color="k", lw=1, ls="--")
-    ax2.set(xlabel="Âge réel", ylabel="Prédit - réel (ans)", title="Erreur signée")
+    ax2.set(xlabel="True age", ylabel="Predicted - true (years)", title="Signed error")
     ax1.legend()
     fig.suptitle(title)
     fig.savefig(path, bbox_inches="tight", dpi=120)
@@ -97,8 +98,8 @@ def plot_validation_curve(run_dir: Path) -> None:
     if not tsv.exists():
         return
     val = pd.read_csv(tsv, sep="\t")
-    ax = val.plot(x=val.columns[0], y="mae", marker="o", legend=False, title="MAE de validation par epoch")
-    ax.set_ylabel("MAE (ans)")
+    ax = val.plot(x=val.columns[0], y="mae", marker="o", legend=False, title="Validation MAE per epoch")
+    ax.set_ylabel("MAE (years)")
     ax.figure.savefig(run_dir / "validation_curve.png", bbox_inches="tight", dpi=120)
     plt.close(ax.figure)
     print(f"-> {run_dir / 'validation_curve.png'}")
@@ -108,14 +109,14 @@ def main():
     parser = argparse.ArgumentParser()
     add_run_args(parser)  # same options as for training, to find the run folder
     parser.add_argument("--run-dir", type=Path, default=None,
-                        help="dossier du run (défaut : déduit des options ci-dessus)")
-    parser.add_argument("--checkpoint", default="best-mae", help="best-mae, final ou epoch-<n>")
+                        help="run folder (default: derived from the options above)")
+    parser.add_argument("--checkpoint", default="best-mae", help="best-mae, final or epoch-<n>")
     args = parser.parse_args()
 
     run_dir = args.run_dir or run_dir_path(args)
     model_pt = model_path(run_dir, args.checkpoint)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Modèle : {model_pt}  ({device})")
+    print(f"Model: {model_pt}  ({device})")
     model = load_model(model_pt, device)
 
     table = pd.read_csv(age_table_path(args.data), sep="\t")
@@ -126,7 +127,7 @@ def main():
     results = []
     for group, ids in groups.items():
         data = table.merge(ids, on=IDS)
-        print(f"\nPrédiction {group} ({len(data)} images)")
+        print(f"\nPrediction {group} ({len(data)} images)")
         data["predicted"] = predict(model, data, device, args.data)
         data["group"] = group
         results.append(data)

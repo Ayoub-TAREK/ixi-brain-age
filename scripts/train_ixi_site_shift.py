@@ -1,19 +1,18 @@
 """
-Âge cérébral sur IXI avec ClinicaDL 2.0 : effet du changement d'hôpital (site shift).
+Brain age on IXI with ClinicaDL 2.0: effect of a change of hospital (site shift).
 
-Expérience :
-  - entraînement sur les hôpitaux TRAIN_SITES (split par patient : train / val / test interne)
-  - évaluation 1 : test interne  (mêmes hôpitaux, sujets jamais vus)      -> "in-site"
-  - évaluation 2 : tous les sujets de TEST_SITE (hôpital jamais vu)        -> "out-of-site"
+Experiment:
+  - training on the two hospitals other than --test-site (subject-level split: train / val / internal test)
+  - evaluation 1: internal test  (same hospitals, unseen subjects)        -> "insite"
+  - evaluation 2: all subjects of --test-site (unseen hospital)          -> "outofsite"
 
-Lancer :  python scripts/train_ixi_site_shift.py --test-site IOP
-          python scripts/train_ixi_site_shift.py --check   (vérifie le prétraitement sur 1 image)
+Run:  python scripts/train_ixi_site_shift.py --test-site IOP
+      python scripts/train_ixi_site_shift.py --check   (checks the preprocessing on one image per hospital)
           python scripts/train_ixi_site_shift.py --test-site IOP --data t1linear   (Clinica t1-linear images)
 
 --data bids2mm  (default) needs scripts/cache_preprocessed.py output in data/IXI/bids_2mm.
 --data t1linear needs data/IXI/caps_t1linear_2mm (scripts/t1_linear_wsl.sh); results go to *_t1linear folders.
 --scheduler plateau and --seed <n> add _plateau / _seed<n> to the run folder.
-Les corrections d'API trouvées sur brain_age_test.py sont reprises ici.
 """
 
 import argparse
@@ -107,10 +106,10 @@ AUGMENTATIONS = [RandomScannerContrast(p=0.8)]
 
 
 class AgeRegressor(torch.nn.Module):
-    """DenseNet qui prédit un âge normalisé z ; la sortie est remise en années (moyenne + écart-type * z).
+    """DenseNet that predicts a normalized age z; the output is mapped back to years (mean + std * z).
 
-    Les labels, la loss et la MAE restent donc en années. La moyenne et l'écart-type sont
-    enregistrés dans le checkpoint (buffers), ce qui permet de recharger le modèle tel quel.
+    Labels, loss and MAE therefore stay in years. The mean and standard deviation are saved
+    in the checkpoint (buffers), so the model can be reloaded as is.
     """
 
     def __init__(self, age_mean: float = 0.0, age_std: float = 1.0):
@@ -138,12 +137,12 @@ def make_dataset(tsv: Path, augment: bool = False, data: str = "bids2mm") -> Bid
 
 
 def check_preprocessing(out_dir: Path, data: str = "bids2mm") -> None:
-    """Sauve 3 coupes centrales d'un sujet par hôpital pour vérifier le cadrage."""
+    """Saves 3 central slices of one subject per hospital, to check the framing."""
     import matplotlib.pyplot as plt
 
     table = pd.read_csv(age_table_path(data), sep="\t")
     for site in SITES:
-        first = table[table.site == site].head(1)          # 1er sujet de cet hôpital
+        first = table[table.site == site].head(1)          # first subject of this hospital
         tsv = out_dir / f"check_{site}.tsv"
         first.to_csv(tsv, sep="\t", index=False)
         dataset = make_dataset(tsv, data=data)
@@ -153,8 +152,8 @@ def check_preprocessing(out_dir: Path, data: str = "bids2mm") -> None:
         img_obj = sample.image if hasattr(sample, "image") else sample["image"]
         tensor = img_obj.data if hasattr(img_obj, "data") else img_obj
         img = tensor.squeeze().numpy()
-        print(f"{site} - {sample.participant_id} : forme {img.shape}, "
-              f"moyenne {img.mean():.2f}, écart-type {img.std():.2f}")
+        print(f"{site} - {sample.participant_id}: shape {img.shape}, "
+              f"mean {img.mean():.2f}, std {img.std():.2f}")
 
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         slices = [img[img.shape[0] // 2], img[:, img.shape[1] // 2], img[:, :, img.shape[2] // 2]]
@@ -209,37 +208,37 @@ def main():
     computational = ComputationalConfig(gpu=gpu, amp=gpu, seed=args.seed)
     print(f"GPU : {gpu} | seed : {args.seed}")
 
-    # 1. Séparer hôpitaux d'entraînement / hôpital de test
+    # 1. Training hospitals / held-out hospital
     table = pd.read_csv(age_table_path(args.data), sep="\t")
     train_sites = [s for s in SITES if s != args.test_site]
     train_tsv = out_dir / "train_sites.tsv"
     ood_tsv = out_dir / "out_of_site.tsv"
     table[table.site.isin(train_sites)].to_csv(train_tsv, sep="\t", index=False)
     table[table.site == args.test_site].to_csv(ood_tsv, sep="\t", index=False)
-    print(f"Entraînement sur {train_sites} : {table.site.isin(train_sites).sum()} sujets")
-    print(f"Hôpital jamais vu {args.test_site} : {(table.site == args.test_site).sum()} sujets")
+    print(f"Training on {train_sites}: {table.site.isin(train_sites).sum()} subjects")
+    print(f"Unseen hospital {args.test_site}: {(table.site == args.test_site).sum()} subjects")
 
-    # 2. Split par patient dans les hôpitaux d'entraînement
+    # 2. Subject-level split within the training hospitals
     dataset = make_dataset(train_tsv, augment=args.augment, data=args.data)
     split_dir = make_split(train_tsv, n_test=0.2, seed=42)
     kfold_dir = make_kfold(split_dir / "train.tsv", n_splits=5, seed=42)
-    split = next(iter(KFold(kfold_dir).get_splits(dataset)))  # on n'utilise que le 1er fold
+    split = next(iter(KFold(kfold_dir).get_splits(dataset)))  # only the first fold is used
     split.build_train_loader(batch_size=args.batch_size, shuffle=True)
     split.build_val_loader(batch_size=args.batch_size)
 
-    # 3. Modèle et entraînement
-    # normalisation de l'âge avec les sujets train + validation uniquement (le test interne est exclu)
+    # 3. Model and training
+    # age normalization from the train + validation subjects only (the internal test set is excluded)
     pool_ids = pd.read_csv(split_dir / "train.tsv", sep="\t")[["participant_id", "session_id"]]
     train_ages = table.merge(pool_ids, on=["participant_id", "session_id"])["AgeMRI"]
-    print(f"Âge (train + val) : moyenne {train_ages.mean():.1f}, écart-type {train_ages.std():.1f}")
-    print(f"Learning rate : {args.lr}")
-    print(f"Images : {args.data} ({INPUTS[args.data][0].name})")
-    print(f"Augmentation : {AUGMENTATIONS if args.augment else 'none'}")
-    print(f"LR scheduler : {args.scheduler}")
+    print(f"Age (train + val): mean {train_ages.mean():.1f}, std {train_ages.std():.1f}")
+    print(f"Learning rate: {args.lr}")
+    print(f"Images: {args.data} ({INPUTS[args.data][0].name})")
+    print(f"Augmentation: {AUGMENTATIONS if args.augment else 'none'}")
+    print(f"LR scheduler: {args.scheduler}")
     callbacks = [
         # with a scheduler, improvements come later (after each LR decrease): wait longer before stopping
         EarlyStoppingCallback(metric="mae", patience=10 if args.scheduler == "none" else 15),
-        # sauve aussi le meilleur modèle en validation (MAE), évalué plus bas
+        # also keeps the best validation (MAE) model
         ModelCheckpointCallback(metric="mae", epochs=range(10, args.epochs + 1, 10)),
     ]
     if args.scheduler == "plateau":
@@ -262,19 +261,19 @@ def main():
     )
     trainer.train(split=split, computational=computational)
 
-    # 4. Évaluations : même hôpitaux vs hôpital jamais vu
+    # 4. Evaluation: same hospitals vs unseen hospital
     in_site = dataset.subset(split_dir / "test_baseline.tsv")
     out_of_site = make_dataset(ood_tsv, data=args.data)
     for name, ds in [("insite", in_site), ("outofsite", out_of_site)]:
         print(f"\n=== Test {name} ({len(ds)} images) ===")
         trainer.test(
-            model_checkpoint="split-0_best-mae",  # meilleure MAE de validation, pas la dernière epoch
+            model_checkpoint="split-0_best-mae",  # ClinicaDL test metrics on the best validation epoch (predict_ages.py evaluates the final model)
             group_name=name,
             dataloader=DataLoader(ds),
             metrics=["mae"],
             computational=computational,
         )
-    print(f"\nRésultats dans {out_dir / 'maps'}")
+    print(f"\nResults in {out_dir / 'maps'}")
 
 
 if __name__ == "__main__":
