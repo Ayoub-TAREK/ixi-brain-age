@@ -74,18 +74,19 @@ For the t1-linear images: run Clinica t1-linear with `bash scripts/t1_linear_wsl
 
 ## Results
 
-Each hospital is held out in turn. Out-of-site mean absolute error (MAE) in years, i.e. on the hospital never seen in training (in-site MAE in parentheses):
+Each hospital is held out in turn. Out-of-site mean absolute error (MAE) in years, i.e. on the hospital never seen in training (in-site MAE in parentheses; AdaBN does not change in-site predictions):
 
-| Held-out hospital | v1: baseline | v2: t1-linear | v3a: t1-linear + contrast augmentation |
-|---|---|---|---|
-| IOP | 10.8 (5.8) | 11.2 (6.8) | **8.8** (5.7) |
-| HH | 25.2 (7.9) | **8.6** (7.1) | 9.3 (7.9) |
-| Guys | 17.1 (7.5) | **8.9** (7.0) | 10.9 (7.0) |
+| Held-out hospital | v1: baseline | v2: t1-linear | v3a: + contrast augmentation | v3b: v3a + AdaBN |
+|---|---|---|---|---|
+| IOP | 10.8 (5.8) | 11.2 (6.8) | **8.8** (5.7) | 10.2 |
+| HH | 25.2 (7.9) | 8.6 (7.1) | 9.3 (7.9) | **7.6** |
+| Guys | 17.1 (7.5) | 8.9 (7.0) | 10.9 (7.0) | **8.4** |
 
 For reference, always predicting the mean training age gives an MAE of about 14-16 years.
 
 - **v1, baseline**: the error is 2 to 3 times higher on an unseen hospital, and systematic: HH subjects are all predicted too young, Guys subjects too old, older IOP subjects too young. Subjects are still ranked correctly by age (correlation ≈ 0.7-0.8): the model has partly learned each scanner's image style.
 - **v2, Clinica t1-linear** (bias field correction + registration) **removes most of the HH and Guys shift**: their out-of-site error becomes close to the in-site error. IOP is not fixed: it has a very different tissue contrast, which registration does not change.
 - **v3a, contrast augmentation** (random gamma and bias field during training) **fixes much of the IOP shift** (correlation 0.52 → 0.82), and does not help HH and Guys, whose remaining error is mostly an offset that varies from run to run.
+- **v3b, AdaBN** (BatchNorm statistics re-estimated on the unseen hospital's images, without their ages, no retraining) **removes that offset for HH and Guys**, but makes IOP worse: IOP subjects are 7 years younger on average than the training hospitals, and AdaBN cannot tell this population difference from a scanner difference (label shift). The size and sign of the AdaBN bias follow the age gap at all three hospitals.
 
-Next steps: stabilize training (noisy validation curves, several seeds), then unsupervised domain adaptation (AdaBN, DANN). Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).
+Next steps: stabilize training (noisy validation curves, several seeds), then DANN, with the label-shift caveat in mind. Single run per configuration; details, plots and analyses in [docs/journal.md](docs/journal.md).

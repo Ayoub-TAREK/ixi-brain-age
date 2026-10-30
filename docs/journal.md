@@ -209,6 +209,35 @@ Out-of-site signed error by age group (bias in years):
 - Reading: augmentation helps where the remaining shift is contrast. Elsewhere, the out-of-site MAE is dominated by an offset that moves from one run to the next, consistent with the very noisy validation curves and the best-epoch choice. Differences of 1-2 years between single runs cannot be interpreted; several seeds are needed.
 - This offset is also what AdaBN and DANN act on (target statistics, aligned features), which makes them the natural next step.
 
+## v3b: AdaBN (2026-10-30)
+
+- `scripts/adabn.py`, no training: copy of a trained model whose 121 BatchNorm layers have their running statistics reset and re-estimated (cumulative average, batches of 8, no augmentation) on all the images of the held-out hospital; every learned weight is unchanged (checked). The ages of the held-out hospital are never used (the label column passed to ClinicaDL is filled with zeros). Transductive setting: the same images are then predicted. In-site predictions use the original model.
+- Applied to the 6 trained models of v2 and v3a; ~1-2 min per model on a T4.
+
+| Run | outofsite MAE before → AdaBN | bias before → AdaBN | r before → AdaBN |
+|---|---|---|---|
+| IOP (v2) | 11.21 → 14.87 | −4.05 → +10.38 | 0.52 → 0.57 |
+| IOP (v3a) | 8.80 → 10.24 | +0.93 → +7.13 | 0.82 → 0.83 |
+| HH (v2) | 8.62 → **7.58** | +4.82 → +4.05 | 0.85 → 0.86 |
+| HH (v3a) | 9.26 → **7.63** | −6.48 → +1.45 | 0.85 → 0.85 |
+| Guys (v2) | 8.87 → 9.13 | +2.51 → −2.42 | 0.75 → 0.74 |
+| Guys (v3a) | 10.91 → **8.43** | +9.24 → −3.78 | 0.80 → 0.79 |
+
+- **The correlation never changes** (±0.05): AdaBN only moves the offset of the predictions, as expected from re-estimating normalization statistics.
+- **HH and Guys**: AdaBN removes the run-to-run offset. The two HH models, whose biases had opposite signs (+4.8 / −6.5), both land at MAE ≈ 7.6; the two Guys models at 8.4-9.1. Best out-of-site MAE so far for HH (7.58).
+- **IOP gets worse** (11.2 → 14.9, 8.8 → 10.2): young IOP subjects become strongly over-estimated (≤ 35: +19 / +13 years).
+- **Explanation: label shift.** AdaBN re-centers the features on the target population, so it also removes the part of the feature shift that comes from a *different age distribution*, and predictions are pulled toward the training mean age. The sign and size of the post-AdaBN bias follow the gap between the mean age of the training hospitals and of the target:
+
+| Held out | Mean age, training hospitals | Mean age, target | Gap (train − target) | Bias after AdaBN (v2 / v3a) |
+|---|---|---|---|---|
+| IOP | 49.5 | 42.4 | +7.1 | +10.4 / +7.1 |
+| HH | 49.3 | 47.4 | +1.9 | +4.1 / +1.5 |
+| Guys | 46.0 | 50.8 | −4.8 | −2.4 / −3.8 |
+
+(mean ages over all subjects of each hospital; the model's normalization uses train + validation only, which is close.)
+
+- Consequence for DANN: it also aligns the feature distributions of source and target as a whole, so it has the same weakness when the target population is younger or older (IOP). Options: re-weight the source samples to match an estimated target age distribution, a smaller alignment weight, or alignment conditioned on the predicted age. To be stated explicitly when presenting results.
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
@@ -219,16 +248,18 @@ Out-of-site signed error by age group (bias in years):
 - v1 improves both IOP MAEs over v1a and stabilizes training, but there is a single run each; differences of a few years may be chance.
 - A train/validation gap appears in v1 (≈ 2.5 vs ≈ 6-7 years RMSE / MAE), i.e. some overfitting.
 - **Update after t1-linear**: the Guys / HH shift was mostly geometric or bias-field related (removed by N4 + affine registration), not a global intensity effect. Two kinds of shift remain distinct: preprocessing fixes HH and Guys, while IOP's shift (contrast) survives it.
+- **Update after v3a / v3b**: contrast augmentation fixes much of IOP's shift; the remaining HH / Guys error is mostly an offset, which AdaBN removes. AdaBN fails on IOP because of label shift (IOP is 7 years younger than the training hospitals on average): a scanner shift and a population shift cannot be told apart from images alone.
 
 **Limitations**: one run per configuration; training sets of different sizes (249-495 subjects); small age groups in some test sets; no skull stripping; very noisy validation curves (the best-epoch choice is partly luck).
 
 ## Next ideas
 
-After v2 and v3a, in order:
+After v2, v3a and AdaBN, in order:
 
 - **Stabilize training** before comparing methods: learning-rate scheduler, possibly larger batches or GroupNorm instead of BatchNorm, and several seeds per configuration.
+- **DANN**, with the label-shift caveat in mind: compare with a version that re-weights source samples by age, and keep the alignment weight small.
+- **AdaBN without transduction**: re-estimate the statistics on half of the target images and evaluate on the other half.
 - **Faster augmentation**: compute the bias field on a coarse grid and upsample it.
-- **AdaBN** (recompute BatchNorm statistics on the unlabeled target images), then **DANN**.
 - **Ablation N4 vs registration**, to know which step removes the Guys / HH shift.
 
 Earlier ideas (before t1-linear):
