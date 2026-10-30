@@ -10,8 +10,10 @@ Two heads share the DenseNet features f (1024 values per image):
     keeping the age prediction accurate on the source.
 
 Choices (see docs/journal.md):
-  - warm start from the source model (best-mae checkpoint): DANN fine-tunes it; the run it starts
-    from gives the split, the age normalization and the "before" result;
+  - warm start from the source model (final checkpoint by default, --source-checkpoint): DANN
+    fine-tunes it; the run it starts from gives the split, the age normalization and the "before"
+    result. The final model is used rather than the best validation epoch: with noisy validation
+    curves, the best epoch is often an early, lucky dip that generalizes worse (journal, 2026-10-30);
   - age loss on normalized ages (MSE in z units, ~0.1-0.5) so that it has the same scale as the
     domain loss (binary cross-entropy, ~0.69): lambda then has its usual meaning;
   - BatchNorm statistics frozen (source statistics, as in the warm-start model): the alignment has
@@ -147,6 +149,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8, help="per domain: each step sees 8 source + 8 target")
     parser.add_argument("--lr", type=float, default=3e-5, help="DenseNet and age head (fine-tuning)")
     parser.add_argument("--lr-domain", type=float, default=1e-4, help="domain classifier (trained from scratch)")
+    parser.add_argument("--source-checkpoint", default="final", help="model of the source run to start from")
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args()
 
@@ -165,7 +168,8 @@ def main():
     shutil.copytree(source_dir / "split", out_dir / "split")
     for name in ["out_of_site.tsv", "train_sites.tsv"]:
         shutil.copy(source_dir / name, out_dir / name)
-    print(f"Source run : {source_dir.name}\nDANN run   : {out_dir.name}  ({device}, seed {args.seed})")
+    print(f"Source run : {source_dir.name} ({args.source_checkpoint} model)\n"
+          f"DANN run   : {out_dir.name}  ({device}, seed {args.seed})")
 
     # data: same train / validation fold as the source run; target = held-out hospital, without ages
     table = pd.read_csv(age_table_path(args.data), sep="\t")
@@ -182,7 +186,7 @@ def main():
     eval_tgt = DataLoader(Images(target, args.data, False), **loader)
 
     # model: warm start from the source model
-    regressor = load_model(model_path(source_dir, "best-mae"), device)
+    regressor = load_model(model_path(source_dir, args.source_checkpoint), device)
     model = DANN(regressor).to(device)
     mean, std = float(regressor.age_mean), float(regressor.age_std)
     optimizer = torch.optim.Adam([

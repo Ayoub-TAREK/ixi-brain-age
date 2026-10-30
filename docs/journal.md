@@ -238,12 +238,29 @@ Out-of-site signed error by age group (bias in years):
 
 - Consequence for DANN: it also aligns the feature distributions of source and target as a whole, so it has the same weakness when the target population is younger or older (IOP). Options: re-weight the source samples to match an estimated target age distribution, a smaller alignment weight, or alignment conditioned on the predicted age. To be stated explicitly when presenting results.
 
-## Stabilized training (2026-10-30, to run)
+## Stabilized training (2026-10-30)
 
 - `--scheduler plateau`: ReduceLROnPlateau on validation MAE (factor 0.5, patience 3, min 1e-6); early stopping patience 15 instead of 10. Checked locally that the learning rate is halved when the validation MAE stalls. (ClinicaDL's `learning_rates/optimizer.tsv` fills the last epoch's rows with the value after its final reduction.)
 - `--seed`: training randomness only (initialization, batch order, augmentation); the data split stays seed 42, so all seeds are tested on the same subjects.
 - Augmentation: the bias field is computed on a 4× coarser grid and upsampled (same field within 0.8 %, ~60× faster to compute). The v3a runs used the full-resolution field.
-- First run planned: IOP, t1-linear + augmentation, seeds 42 / 1 / 2 (notebook section 15).
+- Augmented runs now take ~30 min (25-29 epochs) instead of ~80.
+
+### Results: IOP, t1-linear + augmentation + scheduler, seeds 42 / 1 / 2
+
+| Seed | Stopped at | Best validation epoch | outofsite MAE, best epoch → final model | insite MAE, best → final | outofsite after AdaBN, final model |
+|---|---|---|---|---|---|
+| 42 | 29 | 13 (isolated dip) | 11.52 → **8.86** | 6.15 → 7.44 | 10.33 |
+| 1 | 25 | 9 (isolated dip) | 13.50 → **11.99** | 6.82 → 6.13 | 11.75 |
+| 2 | 50 (limit) | ~40 (converged) | 12.06 → **11.72** | 6.22 → 5.88 | 9.99 |
+| **mean ± std** | | | 12.36 ± 1.02 → **10.86 ± 1.73** | 6.40 ± 0.37 → 6.48 ± 0.84 | 10.69 ± 0.93 |
+
+- **The scheduler makes the curves calmer** (after the first learning-rate decreases, validation MAE stays within ~1 year, and seed 2 converges smoothly to ~5.8-6.0), but the first ~15 epochs are still noisy.
+- **"Best validation epoch" selection picks lucky dips**: for seeds 42 and 1, the best epoch is an isolated dip in the noisy phase, and early stopping then ends training (patience counted from that dip) while the model is still converging to the same level.
+- **The final model is better out-of-site for every seed** (−1.5 years on average), with the same in-site MAE: from now on, every method is evaluated on the final model (also the warm start of DANN).
+- **Seed-to-seed spread**: ±0.4-0.8 years in-site, **±1.0-1.7 years out-of-site** on IOP. Differences below ~2 years between single runs are not interpretable.
+- **The single v3a IOP run (8.80) was a favorable draw**: this configuration gives 10.9 ± 1.7 on IOP (seed 42's final model: 8.86). The v3a conclusion "augmentation helps IOP" still needs a multi-seed comparison without augmentation (v2 single run: 11.21, r 0.52); the correlation gain (0.52 → 0.66-0.82) looks more robust than the MAE gain.
+- AdaBN on the final models: 10.69 ± 0.93, no clear change on IOP (positive bias, label shift).
+- Protocol to adopt for the next runs: fixed training length with the scheduler (no early stopping on a noisy curve), final model.
 
 ## v3b: DANN (2026-10-30, implemented, to run)
 
