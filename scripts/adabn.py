@@ -24,7 +24,7 @@ import pandas as pd
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from predict_ages import IDS, load_model, plot, predict, summarize
+from predict_ages import IDS, load_model, model_path, plot, predict, summarize
 from train_ixi_site_shift import AgeRegressor, add_run_args, age_table_path, make_dataset, run_dir_path
 
 
@@ -59,7 +59,7 @@ def main():
     args = parser.parse_args()
 
     run_dir = args.run_dir or run_dir_path(args)
-    model_pt = run_dir / "maps" / "training" / "split-0" / "models" / "best_models" / args.checkpoint / "model.pt"
+    model_pt = model_path(run_dir, args.checkpoint)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Model: {model_pt}  ({device})")
     model = load_model(model_pt, device)

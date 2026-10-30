@@ -30,6 +30,14 @@ AGE_BINS = [0, 35, 50, 65, 100]
 IDS = ["participant_id", "session_id"]
 
 
+def model_path(run_dir: Path, checkpoint: str) -> Path:
+    """best-mae -> best_models/best-mae, epoch-<n> -> checkpoints/epoch-<n>, final -> final."""
+    models_dir = run_dir / "maps" / "training" / "split-0" / "models"
+    return (models_dir / "best_models" / checkpoint if checkpoint.startswith("best")
+            else models_dir / "checkpoints" / checkpoint if checkpoint.startswith("epoch")
+            else models_dir / checkpoint) / "model.pt"
+
+
 def load_model(model_pt: Path, device: torch.device) -> AgeRegressor:
     state = torch.load(model_pt, map_location="cpu")
     state = {k.removeprefix("network."): v for k, v in state.items()}
@@ -105,10 +113,7 @@ def main():
     args = parser.parse_args()
 
     run_dir = args.run_dir or run_dir_path(args)
-    models_dir = run_dir / "maps" / "training" / "split-0" / "models"
-    model_pt = (models_dir / "best_models" / args.checkpoint if args.checkpoint.startswith("best")
-                else models_dir / "checkpoints" / args.checkpoint if args.checkpoint.startswith("epoch")
-                else models_dir / args.checkpoint) / "model.pt"
+    model_pt = model_path(run_dir, args.checkpoint)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Modèle : {model_pt}  ({device})")
     model = load_model(model_pt, device)

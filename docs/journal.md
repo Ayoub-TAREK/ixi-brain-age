@@ -238,6 +238,28 @@ Out-of-site signed error by age group (bias in years):
 
 - Consequence for DANN: it also aligns the feature distributions of source and target as a whole, so it has the same weakness when the target population is younger or older (IOP). Options: re-weight the source samples to match an estimated target age distribution, a smaller alignment weight, or alignment conditioned on the predicted age. To be stated explicitly when presenting results.
 
+## Stabilized training (2026-10-30, to run)
+
+- `--scheduler plateau`: ReduceLROnPlateau on validation MAE (factor 0.5, patience 3, min 1e-6); early stopping patience 15 instead of 10. Checked locally that the learning rate is halved when the validation MAE stalls. (ClinicaDL's `learning_rates/optimizer.tsv` fills the last epoch's rows with the value after its final reduction.)
+- `--seed`: training randomness only (initialization, batch order, augmentation); the data split stays seed 42, so all seeds are tested on the same subjects.
+- Augmentation: the bias field is computed on a 4× coarser grid and upsampled (same field within 0.8 %, ~60× faster to compute). The v3a runs used the full-resolution field.
+- First run planned: IOP, t1-linear + augmentation, seeds 42 / 1 / 2 (notebook section 15).
+
+## v3b: DANN (2026-10-30, implemented, to run)
+
+`scripts/train_dann.py`, notebook section 16. Fine-tunes a finished section-15 run (same site, augmentation and seed).
+
+- **Architecture**: the DenseNet features f (1024 values after global pooling) feed the original age head and a domain classifier (1024 → 256 → 256 → 1, ReLU, dropout 0.5) through a gradient reversal layer (identity forward, gradient × −λ backward). Domain label: 0 = training hospitals (source), 1 = held-out hospital (target).
+- **Warm start** from the source model: fine-tuning a model that already predicts age is much more stable than training both objectives from scratch on 300-400 images, and gives a paired "before / after" comparison. A control with λ = 0 (same fine-tuning, no domain loss) separates the DANN effect from the effect of 30 more epochs.
+- **Loss scales**: the age loss is the MSE on normalized ages (z units, ~0.1-0.5), the domain loss a binary cross-entropy (~0.69 at chance level). With the age MSE in years² (~25-100), λ would be meaningless (the domain term would be ~100× too weak).
+- **BatchNorm statistics frozen** (the source statistics of the warm-start model), affine BatchNorm parameters still trained: the alignment must be learned by the weights; training and test use the same normalization; 8 + 8 images per batch would make batch statistics noisy; and changing the statistics is AdaBN's role, kept as a separate method.
+- **Schedules from the original paper** (Ganin et al., JMLR 2016): λ_p = λ_max (2 / (1 + e^(−10p)) − 1), rising from 0 so that the domain classifier is trained before its reversed gradient matters; learning rate lr_p = lr / (1 + 10p)^0.75. p goes from 0 to 1 over the training steps. Learning rates: 3e-5 for the pretrained network (fine-tuning), 1e-4 for the new domain classifier; Adam; 30 epochs; batches of 8 source (augmented as in the source run) + 8 target images (never augmented; the target set is cycled).
+- **IW-DANN against label shift** (`--iw`, Tachet des Combes et al., NeurIPS 2020): source images are re-weighted in the domain loss by w(age bin) = p_target(bin) / p_source(bin), with 5 bins at the source age quintiles. p_target is re-estimated each epoch from the model's *predicted* target ages (+1 smoothing; weights clipped to [0.25, 4]); true target ages are never used. Aligning the re-weighted source with the target no longer asks the features to erase a real age difference, which is what made AdaBN fail on IOP. Limitation: the predicted target ages are themselves biased by the shift, so the estimate is approximate.
+- **Model selection without target labels**: the main result is the final model (fixed training length, as in the paper); the best source-validation checkpoint is saved as a check that age prediction on the source does not degrade. Target ages must not be used to choose λ: all configurations are reported (sensitivity), and the main configuration is fixed in advance (IW-DANN, λ 0.3).
+- **Monitoring** (`dann_log.tsv`, `dann_curves.png`): source validation MAE, domain classifier accuracy (0.5 = domains indistinguishable; staying near 1 means no alignment, a collapse of the source MAE means too strong a λ), mean predicted target age (unlabeled statistic).
+- Transductive setting, as for AdaBN: the target images used for adaptation (without ages) are the evaluated images.
+- Checked locally: the DANN age output equals the warm-start model's; the GRL gradient is −λ; IW weights up-weight the source bins where the predicted target ages fall; end-to-end run on a small set; outputs readable by `predict_ages.py` / `adabn.py` (`--run-dir ... --checkpoint final`).
+
 ## Interpretation so far
 
 - **The model learns on its training hospitals**: in-site MAE 5.8-7.9 years vs ≈ 14 for the naive baseline, with the usual mild regression to the mean.
