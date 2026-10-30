@@ -24,7 +24,7 @@ import pandas as pd
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train_ixi_site_shift import INPUTS, SITES, AgeRegressor, age_table_path, make_dataset, run_dir_path
+from train_ixi_site_shift import AgeRegressor, add_run_args, age_table_path, make_dataset, run_dir_path
 
 AGE_BINS = [0, 35, 50, 65, 100]
 IDS = ["participant_id", "session_id"]
@@ -98,16 +98,13 @@ def plot_validation_curve(run_dir: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-site", default="IOP", choices=SITES)
+    add_run_args(parser)  # same options as for training, to find the run folder
     parser.add_argument("--run-dir", type=Path, default=None,
-                        help="dossier du run (défaut : outputs/site_shift_test-<site>[_aug])")
-    parser.add_argument("--augment", action="store_true", help="run trained with --augment (*_aug folder)")
-    parser.add_argument("--data", default="bids2mm", choices=list(INPUTS),
-                        help="images the run was trained on (t1linear: *_t1linear folder)")
+                        help="dossier du run (défaut : déduit des options ci-dessus)")
     parser.add_argument("--checkpoint", default="best-mae", help="best-mae, final ou epoch-<n>")
     args = parser.parse_args()
 
-    run_dir = args.run_dir or run_dir_path(args.test_site, args.augment, args.data)
+    run_dir = args.run_dir or run_dir_path(args)
     models_dir = run_dir / "maps" / "training" / "split-0" / "models"
     model_pt = (models_dir / "best_models" / args.checkpoint if args.checkpoint.startswith("best")
                 else models_dir / "checkpoints" / args.checkpoint if args.checkpoint.startswith("epoch")

@@ -12,6 +12,7 @@ Lancer :  python scripts/train_ixi_site_shift.py --test-site IOP
 
 --data bids2mm  (default) needs scripts/cache_preprocessed.py output in data/IXI/bids_2mm.
 --data t1linear needs data/IXI/caps_t1linear_2mm (scripts/t1_linear_wsl.sh); results go to *_t1linear folders.
+--scheduler plateau and --seed <n> add _plateau / _seed<n> to the run folder.
 Les corrections d'API trouvées sur brain_age_test.py sont reprises ici.
 """
 
@@ -20,16 +21,18 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import torchio as tio
 from monai.networks.nets import DenseNet121
 
-from clinicadl.callbacks import EarlyStoppingCallback, ModelCheckpointCallback
+from clinicadl.callbacks import EarlyStoppingCallback, LRSchedulerCallback, ModelCheckpointCallback
 from clinicadl.data.dataloader import DataLoader
 from clinicadl.data.datasets import BidsDataset
 from clinicadl.io.bids import BidsFileType
 from clinicadl.metrics.config import MAEMetricConfig
 from clinicadl.models import SupervisedModel
 from clinicadl.optim import OptimizationConfig
+from clinicadl.optim.lr_schedulers.config import ReduceLROnPlateauConfig
 from clinicadl.optim.optimizers.config import AdamConfig
 from clinicadl.split import KFold, make_kfold, make_split
 from clinicadl.train import ComputationalConfig, Trainer
@@ -68,20 +71,34 @@ class RandomScannerContrast(tio.Transform):
     with gamma = 1 and no bias field the image is unchanged, so augmented training images
     stay on the same scale as validation / test images. The default gamma range (0.70-1.42)
     is about twice the Guys / HH contrast difference measured in docs/journal.md.
+
+    The bias field (exponential of a cubic polynomial, very smooth) is computed on a grid
+    `bias_downsampling` times coarser and upsampled: same field, ~3x faster augmentation.
+    The v3a runs used the full-resolution field (bias_downsampling=1).
     """
 
-    def __init__(self, log_gamma: float = 0.35, bias_coefficients: float = 0.3, bias_p: float = 0.5, **kwargs):
+    def __init__(self, log_gamma: float = 0.35, bias_coefficients: float = 0.3, bias_p: float = 0.5,
+                 bias_downsampling: int = 4, **kwargs):
         super().__init__(**kwargs)
         self.log_gamma = log_gamma
         self.bias_field = tio.RandomBiasField(coefficients=bias_coefficients, p=bias_p)
+        self.bias_downsampling = bias_downsampling
+
+    def random_field(self, shape) -> torch.Tensor:
+        """Multiplicative bias field of the given spatial shape (all ones when it is not applied)."""
+        coarse = [max(2, s // self.bias_downsampling) for s in shape]
+        field = self.bias_field(tio.ScalarImage(tensor=torch.ones(1, *coarse))).data.float()
+        if list(field.shape[1:]) != list(shape):
+            field = F.interpolate(field[None], size=tuple(shape), mode="trilinear", align_corners=True)[0]
+        return field
 
     def apply_transform(self, subject: tio.Subject) -> tio.Subject:
         for image in subject.get_images(intensity_only=True):
             x = image.data.float()
             lo, hi = x.min(), x.max()
             gamma = torch.empty(1).uniform_(-self.log_gamma, self.log_gamma).exp()
-            u = tio.ScalarImage(tensor=((x - lo) / (hi - lo)) ** gamma, affine=image.affine)
-            image.set_data(lo + (hi - lo) * self.bias_field(u).data)
+            u = ((x - lo) / (hi - lo)) ** gamma * self.random_field(x.shape[1:])
+            image.set_data(lo + (hi - lo) * u)
         return subject
 
 
@@ -151,26 +168,37 @@ def check_preprocessing(out_dir: Path, data: str = "bids2mm") -> None:
         print(f"  -> {path}")
 
 
-def run_dir_path(test_site: str, augment: bool = False, data: str = "bids2mm") -> Path:
-    """outputs/site_shift_test-<site>[_t1linear][_aug]: the bids2mm folders keep their original names."""
-    suffix = ("" if data == "bids2mm" else f"_{data}") + ("_aug" if augment else "")
-    return BASE_DIR / "outputs" / f"site_shift_test-{test_site}{suffix}"
+def add_run_args(parser: argparse.ArgumentParser) -> None:
+    """Options that identify a run (and its folder), shared with predict_ages.py and adabn.py."""
+    parser.add_argument("--test-site", default="IOP", choices=SITES)
+    parser.add_argument("--data", default="bids2mm", choices=list(INPUTS),
+                        help="input images: bids2mm (own 2 mm preprocessing) or t1linear (Clinica t1-linear)")
+    parser.add_argument("--augment", action="store_true",
+                        help="random scanner-contrast augmentation during training (results in *_aug folder)")
+    parser.add_argument("--scheduler", default="none", choices=["none", "plateau"],
+                        help="plateau: halve the learning rate when the validation MAE stops improving for 3 epochs")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="training seed (initialization, batch order, augmentation); the data split always uses 42")
+
+
+def run_dir_path(args: argparse.Namespace) -> Path:
+    """outputs/site_shift_test-<site>[_t1linear][_aug][_plateau][_seed<n>]: earlier runs keep their names."""
+    suffix = (("" if args.data == "bids2mm" else f"_{args.data}") + ("_aug" if args.augment else "")
+              + ("" if args.scheduler == "none" else f"_{args.scheduler}")
+              + ("" if args.seed == 42 else f"_seed{args.seed}"))
+    return BASE_DIR / "outputs" / f"site_shift_test-{args.test_site}{suffix}"
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-site", default="IOP", choices=SITES)
+    add_run_args(parser)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--augment", action="store_true",
-                        help="random scanner-contrast augmentation during training (results in *_aug folder)")
-    parser.add_argument("--data", default="bids2mm", choices=list(INPUTS),
-                        help="input images: bids2mm (own 2 mm preprocessing) or t1linear (Clinica t1-linear)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    out_dir = run_dir_path(args.test_site, args.augment, args.data)
+    out_dir = run_dir_path(args)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.check:
@@ -178,8 +206,8 @@ def main():
         return
 
     gpu = torch.cuda.is_available()
-    computational = ComputationalConfig(gpu=gpu, amp=gpu, seed=42)
-    print(f"GPU : {gpu}")
+    computational = ComputationalConfig(gpu=gpu, amp=gpu, seed=args.seed)
+    print(f"GPU : {gpu} | seed : {args.seed}")
 
     # 1. Séparer hôpitaux d'entraînement / hôpital de test
     table = pd.read_csv(age_table_path(args.data), sep="\t")
@@ -207,6 +235,18 @@ def main():
     print(f"Learning rate : {args.lr}")
     print(f"Images : {args.data} ({INPUTS[args.data][0].name})")
     print(f"Augmentation : {AUGMENTATIONS if args.augment else 'none'}")
+    print(f"LR scheduler : {args.scheduler}")
+    callbacks = [
+        # with a scheduler, improvements come later (after each LR decrease): wait longer before stopping
+        EarlyStoppingCallback(metric="mae", patience=10 if args.scheduler == "none" else 15),
+        # sauve aussi le meilleur modèle en validation (MAE), évalué plus bas
+        ModelCheckpointCallback(metric="mae", epochs=range(10, args.epochs + 1, 10)),
+    ]
+    if args.scheduler == "plateau":
+        callbacks.append(LRSchedulerCallback(
+            scheduler=ReduceLROnPlateauConfig(mode="min", factor=0.5, patience=3, min_lr=1e-6),
+            metric_name="mae",
+        ))
     model = SupervisedModel(
         network=AgeRegressor(train_ages.mean(), train_ages.std()),
         loss=torch.nn.MSELoss(),
@@ -216,11 +256,7 @@ def main():
     trainer = Trainer(
         maps=out_dir / "maps",
         model=model,
-        callbacks=[
-            EarlyStoppingCallback(metric="mae", patience=10),
-            # sauve aussi le meilleur modèle en validation (MAE), évalué plus bas
-            ModelCheckpointCallback(metric="mae", epochs=range(10, args.epochs + 1, 10)),
-        ],
+        callbacks=callbacks,
         metrics={"mae": MAEMetricConfig(label_key="AgeMRI")},
         optimization=OptimizationConfig(num_epochs=args.epochs),
     )

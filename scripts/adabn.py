@@ -25,7 +25,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from predict_ages import IDS, load_model, plot, predict, summarize
-from train_ixi_site_shift import INPUTS, SITES, AgeRegressor, age_table_path, make_dataset, run_dir_path
+from train_ixi_site_shift import AgeRegressor, add_run_args, age_table_path, make_dataset, run_dir_path
 
 
 @torch.no_grad()
@@ -52,15 +52,13 @@ def adapt_batchnorm(model: AgeRegressor, data: pd.DataFrame, device: torch.devic
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-site", default="IOP", choices=SITES)
-    parser.add_argument("--data", default="t1linear", choices=list(INPUTS))
-    parser.add_argument("--augment", action="store_true", help="run trained with --augment (*_aug folder)")
+    add_run_args(parser)  # same options as for training, to find the run folder
     parser.add_argument("--run-dir", type=Path, default=None)
     parser.add_argument("--checkpoint", default="best-mae")
     parser.add_argument("--batch-size", type=int, default=8, help="batch size used to re-estimate the statistics")
     args = parser.parse_args()
 
-    run_dir = args.run_dir or run_dir_path(args.test_site, args.augment, args.data)
+    run_dir = args.run_dir or run_dir_path(args)
     model_pt = run_dir / "maps" / "training" / "split-0" / "models" / "best_models" / args.checkpoint / "model.pt"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Model: {model_pt}  ({device})")
